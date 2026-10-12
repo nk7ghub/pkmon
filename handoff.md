@@ -35,6 +35,9 @@ To move a vault between modes: Export → Full backup (JSON), then Settings → 
 - `exportPDF`: jsPDF 2.5.1 + autotable 3.8.2 (cdnjs), landscape A4 with thumbnails, sub-scores, sealed, sets and alerts.
 - `packBinder / renderBinder`: share link = deflate-raw + base64url of the card IDs in `#b=`. Opens read-only on the web version.
 
+## Fix log
+- 2026-10-12: "Take or choose photos" did nothing. Cause: a `display:none` file input opened by script `.click()`, which iOS and the Claude frame ignore. `capture` also blocked the gallery, and undecodable photos were skipped silently. Fix: native `<label for>` buttons (`pickBtn`) for two inputs, `#camIn` (camera) and `#fileIn` (gallery, multiple), kept visually hidden but not `display:none`. `decodeImage` falls back to `<img>`. A live "Scanning photo X of Y · %" bar (`setPhotoProgress`) shows progress, errors show as toasts, and Claude always gets a JPEG crop. The 6-second duplicate guard now applies to the live camera only.
+
 ## Tested (headless Chromium, recorded API responses)
 - No JS errors; no sideways scroll at 400 px or 1280 px; light and dark themes.
 - Search → add → portfolio KPIs, INR conversion, detail page, raw/graded table, alert, sealed add, master-set %, CSV (29 columns), PDF (26 KB), text list, trade verdict, binder link round-trip.

@@ -250,6 +250,8 @@ table.t td.n,table.t th.n{text-align:right;font-family:var(--font-m);font-varian
 .scrollx{overflow-x:auto}
 .spin{width:16px;height:16px;border-radius:50%;border:2px solid var(--edge);border-top-color:var(--fire);animation:rot .8s linear infinite;display:inline-block;vertical-align:-3px}
 @keyframes rot{to{transform:rotate(360deg)}}
+.vh{position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;overflow:hidden;clip-path:inset(50%);pointer-events:none}
+label.btn{user-select:none;-webkit-user-select:none}
 .kbd{font-family:var(--font-m);font-size:12px;padding:1px 6px;border-radius:6px;border:1px solid var(--edge)}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}.aura i{animation:none}}
 </style>
@@ -276,7 +278,8 @@ table.t td.n,table.t th.n{text-align:right;font-family:var(--font-m);font-varian
 </nav>
 <div class="toasts" id="toasts" aria-live="polite"></div>
 <div id="sheetRoot"></div>
-<input type="file" id="fileIn" accept="image/*" capture="environment" multiple hidden>
+<input type="file" id="fileIn" class="vh" accept="image/*" multiple tabindex="-1" aria-hidden="true">
+<input type="file" id="camIn" class="vh" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
 <input type="file" id="restoreIn" accept="application/json,.json" hidden>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
@@ -805,7 +808,7 @@ const Scan = {
     return { x: (cw - wid) / 2, y: (chh - hgt) / 2, w: wid, h: hgt };
   },
   async start() {
-    if (!ENV.camera || ENV.claude) { $("#fileIn").click(); return; }
+    if (!ENV.camera || ENV.claude) { $("#camIn").click(); return; }
     try {
       this.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
     } catch (e) {
@@ -873,9 +876,12 @@ const Scan = {
   /* photos (artifact mode, or uploads on the web) */
   async fromFiles(files) {
     const list = [...files].slice(0, 30); if (!list.length) return;
-    toast(`Scanning ${list.length} photo${list.length > 1 ? "s" : ""}…`);
+    let done = 0, failed = 0;
     for (const f of list) {
-      const bmp = await createImageBitmap(f).catch(() => null); if (!bmp) continue;
+      setPhotoProgress(done, list.length);
+      const bmp = await decodeImage(f);
+      if (!bmp) { failed++; done++; toast(`Couldn't open ${f.name || "that photo"}. Use a JPEG or PNG photo.`, "bad"); continue; }
+      try {
       // fit the card: assume it fills most of the photo; centre-crop to 63:88 with a margin
       const ar = 63 / 88; let sw = bmp.width, sh = bmp.height;
       if (sw / sh > ar) sw = sh * ar; else sh = sw / ar;
@@ -890,8 +896,11 @@ const Scan = {
       const ov = $("#overlay"); const r = ov.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
       ov.width = r.width * dpr; ov.height = r.height * dpr; const ctx = ov.getContext("2d"); ctx.clearRect(0, 0, ov.width, ov.height);
       drawOverlay(ctx, this.guide(ov.width, ov.height), gr, dpr);
-      await this.identify(shot, gr, { kind: "unknown", p: 0 }, list.length > 1, f);
+      await this.identify(shot, gr, { kind: "unknown", p: 0 }, list.length > 1);
+      } catch (e) { failed++; console.warn("photo scan", e); toast("Scan failed: " + (e && e.message || e), "bad"); }
+      done++;
     }
+    setPhotoProgress(done, list.length, failed);
   },
   async loadOCR() {
     if (this.ocr || this.ocrLoading) return this.ocrLoading;
@@ -911,14 +920,14 @@ const Scan = {
     const m = (botR.data.text || "").replace(/[Oo]/g, "0").match(/(\d{1,3})\s*\/\s*(\d{2,3})/);
     return { name, number: m ? String(+m[1]) : null, total: m ? +m[2] : null, raw: (nameR.data.text + " | " + botR.data.text).trim() };
   },
-  async identify(shot, gr, foil, auto, file) {
+  async identify(shot, gr, foil, auto) {
     const thumb = (() => { const t = document.createElement("canvas"); t.width = 126; t.height = 176; t.getContext("2d").drawImage(shot, 0, 0, 126, 176); return t.toDataURL("image/jpeg", .72); })();
     const cond = { corners: +gr.corners.toFixed(1), edges: +gr.edges.toFixed(1), surface: +gr.surface.toFixed(1), centering: +gr.centering.toFixed(1), overall: gr.overall, lr: Math.round(gr.lr), tb: Math.round(gr.tb), by: "pixels" };
     setResult({ state: "working", thumb, cond });
     let found = null, candidates = [], ai = null, note = "";
     try {
       if (ENV.cap.sample && ENV.aiImages) {
-        ai = await claudeIdentify(shot, file, foil);
+        ai = await claudeIdentify(shot, foil);
         if (ai && ENV.online && ai.name) {
           const q = `name:"${ai.name.replace(/"/g, "")}"` + (ai.number ? ` number:${String(ai.number).replace(/\D.*$/, "")}` : "");
           candidates = await searchCards(q, 12).catch(() => []);
@@ -939,7 +948,7 @@ const Scan = {
     if (item) item.cond.foil = foil.kind !== "unknown" ? foil.kind : (ai && ai.foil) || null;
     setResult({ state: item ? "found" : "miss", item, candidates: candidates.slice(1, 6), thumb, cond, note });
     if (item && (auto || S.settings.stack)) {
-      if (this.lastAddedId === (item.cardId || item.name) && Date.now() - this.lastAddedAt < 6000) return;
+      if (this.stream && this.lastAddedId === (item.cardId || item.name) && Date.now() - this.lastAddedAt < 6000) return; // live-camera double-capture guard only
       addItem(item, { quiet: true }); S.stackSession.unshift(item); this.lastAddedId = item.cardId || item.name; this.lastAddedAt = Date.now();
       beep(); renderTray();
     }
@@ -947,8 +956,8 @@ const Scan = {
 };
 
 /* Claude vision (artifact viewer): identify + variant + grading read, strict JSON */
-async function claudeIdentify(shot, file, foil) {
-  const blob = file && file.size < 15e6 ? file : await new Promise(r => shot.toBlob(r, "image/jpeg", .9));
+async function claudeIdentify(shot, foil) {
+  const blob = await new Promise(r => shot.toBlob(r, "image/jpeg", .9));
   const prompt = `You are a Pokémon TCG expert grader. The image is a photo of one Pokémon trading card (front).
 Identify it and assess condition. Reply with ONLY this JSON (no prose):
 {"name":"card name exactly as printed","number":"collector number before the slash","setTotal":printed set total as number or null,"setName":"set name","setCode":"set code e.g. SV3pt5 or null","rarity":"rarity as printed/official","foil":"normal|holo|reverse","altArt":true|false,"secretRare":true|false,"variantNote":"short note on variant (e.g. Special Illustration Rare, reverse holo pattern)","estGrade":"PSA-style estimate like 9 or 8.5","gradeNote":"one sentence on corners, edges, surface, centering","estUSD":approx current raw near-mint market price in USD as a number from your knowledge, or null,"confidence":0-1}
@@ -975,6 +984,32 @@ function itemFromAI(ai, cond, thumb) {
     prices: { tcg: null, cm: null, t: Date.now(), src: "ai" }, aiEstUSD: typeof ai.estUSD === "number" ? ai.estUSD : null,
     thumb, added: Date.now(), notes: ""
   };
+}
+
+/* native <label for> opens the picker reliably on iOS, Android and inside the Claude frame */
+function pickBtn(inputId, cls, html) {
+  return h("label", { for: inputId, class: cls, role: "button", tabindex: 0, html,
+    onkeydown: e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("#" + inputId).click(); } } });
+}
+/* decode any photo the browser can show; createImageBitmap first, <img> fallback (older iOS, some HEIC) */
+async function decodeImage(f) {
+  try { return await createImageBitmap(f, { imageOrientation: "from-image" }); } catch { /* fall through */ }
+  try { return await createImageBitmap(f); } catch { /* fall through */ }
+  const url = URL.createObjectURL(f);
+  try {
+    const img = new Image(); img.decoding = "async"; img.src = url;
+    await img.decode();
+    return img.naturalWidth ? Object.assign(img, { width: img.naturalWidth, height: img.naturalHeight }) : null;
+  } catch { return null; } finally { setTimeout(() => URL.revokeObjectURL(url), 4000); }
+}
+function setPhotoProgress(done, total, failed = 0) {
+  const c = $("#scanCtrls"); if (!c) return;
+  let bar = $("#photoProg");
+  if (!bar) { bar = h("div", { id: "photoProg", class: "stack", style: "gap:6px;width:100%" }, h("div", { class: "small", id: "photoProgT" }), h("div", { class: "prog" }, h("i", { style: "width:0" }))); c.prepend(bar); }
+  const p = total ? done / total : 0;
+  bar.querySelector("i").style.width = (p * 100) + "%";
+  $("#photoProgT").innerHTML = done < total ? `<span class="spin"></span> Scanning photo ${done + 1} of ${total} · ${Math.round(p * 100)}%`
+    : `<b>Done:</b> ${total - failed} of ${total} scanned${failed ? ` · ${failed} failed` : ""} · 100%`;
 }
 
 /* overlay drawing: guide, measured borders, 3×3 grading grid, corner ticks */
@@ -1098,7 +1133,8 @@ function viewScan() {
               : "Take a photo of each card front, filling the frame. Pick several at once to scan a stack. Claude reads each card and the grader measures it."),
             h("div", { class: "row", style: "justify-content:center" },
               web ? h("button", { class: "btn primary", onclick: () => Scan.start(), html: ICON.cam + "Start camera" }) : null,
-              h("button", { class: web ? "btn" : "btn primary", onclick: () => $("#fileIn").click(), html: ICON.img + (web ? "Upload photos" : "Take or choose photos") })))),
+              web ? null : pickBtn("camIn", "btn primary", ICON.cam + "Take photo"),
+              pickBtn("fileIn", web ? "btn" : "btn", ICON.img + (web ? "Upload photos" : "Choose photos"))))),
           h("div", { class: "flash", id: "flash" })),
         h("div", { class: "scan-ctrls", id: "scanCtrls" })),
       h("div", { class: "stack" },
@@ -1114,17 +1150,17 @@ function viewScan() {
   return v;
 }
 function renderScanCtrls() {
-  const c = $("#scanCtrls"); if (!c) return; c.innerHTML = "";
+  const c = $("#scanCtrls"); if (!c) return; const keep = $("#photoProg"); c.innerHTML = ""; if (keep) c.append(keep);
   if (Scan.stream) {
     c.append(
       h("button", { class: "btn primary", disabled: Scan.busy, onclick: () => Scan.capture(false), html: (Scan.busy ? '<span class="spin"></span>' : ICON.cam) + (Scan.busy ? "Reading card…" : "Capture now") }),
       h("button", { class: "btn", onclick: () => Scan.stop() }, "Stop camera"),
-      h("button", { class: "btn ghost", onclick: () => $("#fileIn").click(), html: ICON.img + "Photos" }),
+      pickBtn("fileIn", "btn ghost", ICON.img + "Photos"),
       h("span", { class: "small muted" }, S.settings.stack ? "Auto-captures when the card is steady" : ""));
   } else if (!$("#stageIdle")?.hidden) {
     c.append(h("span", { class: "small muted" }, ENV.claude ? "Inside Claude the live camera isn't available, so card ID uses photos and Claude vision." : ENV.online ? "Card ID reads the name and collector number, then looks the card up live." : "Offline: card lookup is paused. Grading still works."));
   } else {
-    c.append(h("button", { class: "btn primary", onclick: () => $("#fileIn").click(), html: ICON.img + "Scan more photos" }),
+    c.append(pickBtn("camIn", "btn primary", ICON.cam + "Take photo"), pickBtn("fileIn", "btn", ICON.img + "Choose photos"),
       !ENV.claude && ENV.camera ? h("button", { class: "btn", onclick: () => Scan.start(), html: ICON.cam + "Live camera" }) : null);
   }
 }
@@ -1146,7 +1182,10 @@ function setResult(r) {
   if (r.state === "miss") {
     box.append(h("div", { class: "result" }, h("img", { class: "thumb", src: r.thumb, alt: "" }),
       h("div", { class: "stack", style: "gap:6px" }, h("h2", {}, "Card not recognised"),
-        h("p", { class: "small muted", style: "margin:0" }, ENV.online || ENV.cap.sample ? "Try steadier light with less glare, or search by name below. " + (r.note || "") : "Card lookup needs an internet connection. Search by name once online."))),
+        h("p", { class: "small muted", style: "margin:0" }, ENV.cap.sample && ENV.aiImages ? "Fill the frame with one card, in even light with less glare, then try again." + (r.note ? " " + r.note : "")
+          : ENV.claude ? "Claude card reading is switched off for this page. Allow it in the page's Permissions menu, then scan again. The grade below was still measured."
+          : ENV.online ? "Try steadier light with less glare, or search by name below. " + (r.note || "") : "Card lookup needs an internet connection. Search by name once online."),
+        ENV.claude && !(ENV.cap.sample && ENV.aiImages) ? h("button", { class: "btn sm", onclick: () => window.claude.use("permissions").then(pm => pm && pm.manage()).catch(() => toast("Open the Permissions menu at the top of this page.", "bad")) }, "Open permissions") : null)),
       h("div", { style: "margin-top:12px" }, gb));
     return;
   }
@@ -1871,7 +1910,12 @@ async function boot() {
   cs.onchange = e => { S.settings.cur = e.target.value; Store.saveMeta(); render(); };
   $("#themeBtn").onclick = () => applyTheme({ system: "light", light: "dark", dark: "system" }[S.settings.theme]);
   $$(".nav button").forEach(b => b.onclick = () => setView(b.dataset.v));
-  $("#fileIn").onchange = e => { const f = e.target.files; if (S.view !== "scan") setView("scan"); setTimeout(() => Scan.fromFiles(f).finally(() => { e.target.value = ""; renderScanCtrls(); }), 30); };
+  for (const id of ["fileIn", "camIn"]) $("#" + id).addEventListener("change", e => {
+    const f = [...(e.target.files || [])]; e.target.value = "";
+    if (!f.length) return;
+    if (S.view !== "scan") setView("scan");
+    setTimeout(() => Scan.fromFiles(f).catch(err => toast("Scan failed: " + err.message, "bad")).finally(renderScanCtrls), 30);
+  });
   $("#restoreIn").onchange = e => { if (e.target.files[0]) restoreFrom(e.target.files[0]); e.target.value = ""; };
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(S.settings.theme));
   setModeChip();
