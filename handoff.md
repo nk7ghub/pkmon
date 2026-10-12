@@ -38,6 +38,13 @@ To move a vault between modes: Export → Full backup (JSON), then Settings → 
 ## Fix log
 - 2026-10-12: "Take or choose photos" did nothing. Cause: a `display:none` file input opened by script `.click()`, which iOS and the Claude frame ignore. `capture` also blocked the gallery, and undecodable photos were skipped silently. Fix: native `<label for>` buttons (`pickBtn`) for two inputs, `#camIn` (camera) and `#fileIn` (gallery, multiple), kept visually hidden but not `display:none`. `decodeImage` falls back to `<img>`. A live "Scanning photo X of Y · %" bar (`setPhotoProgress`) shows progress, errors show as toasts, and Claude always gets a JPEG crop. The 6-second duplicate guard now applies to the live camera only.
 
+- 2026-10-12 (2): On the phone, both photo buttons still did nothing inside the Claude mobile app; on desktop, both opened the file browser. Cause: the mobile app's artifact web view doesn't open file pickers from the frame, which a page can't override; desktop ignores `capture` by design. Fix:
+  - `armPickerWatch`: if no blur, pagehide, visibilitychange, change or cancel event arrives within 1.5 s of a tap, `openPhotoHelp` opens with three options: paste box, "Open with camera" (web version link), and try the picker again.
+  - `pasteBox`: an always-visible paste target under the stage in Claude mode, using `imageFilesFrom(clipboardData)`.
+  - Drag & drop and Ctrl/⌘+V anywhere on the page (`scanPicked`).
+  - Desktop (`TOUCH` false) shows only "Choose photos" plus the drop and paste hint; "Take photo" appears only on touch devices.
+  - The "Open with camera" link only works once GitHub Pages is enabled.
+
 ## Tested (headless Chromium, recorded API responses)
 - No JS errors; no sideways scroll at 400 px or 1280 px; light and dark themes.
 - Search → add → portfolio KPIs, INR conversion, detail page, raw/graded table, alert, sealed add, master-set %, CSV (29 columns), PDF (26 KB), text list, trade verdict, binder link round-trip.

@@ -252,6 +252,8 @@ table.t td.n,table.t th.n{text-align:right;font-family:var(--font-m);font-varian
 @keyframes rot{to{transform:rotate(360deg)}}
 .vh{position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;overflow:hidden;clip-path:inset(50%);pointer-events:none}
 label.btn{user-select:none;-webkit-user-select:none}
+body.dropping .stage{outline:3px dashed var(--water);outline-offset:4px}
+#pasteIn{min-height:54px}
 .kbd{font-family:var(--font-m);font-size:12px;padding:1px 6px;border-radius:6px;border:1px solid var(--edge)}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}.aura i{animation:none}}
 </style>
@@ -986,9 +988,64 @@ function itemFromAI(ai, cond, thumb) {
   };
 }
 
+/* Some app web views (Claude mobile) never open a file picker from the artifact frame.
+   A real picker takes focus or hides the page; if neither happens within 1.5 s, offer paste / browser instead. */
+let pickerWatch = null;
+function armPickerWatch(inputId) {
+  if (!ENV.claude) return;
+  if (pickerWatch) pickerWatch.done();
+  const inp = $("#" + inputId); let fired = false;
+  const hit = () => { fired = true; };
+  const evs = [[window, "blur"], [window, "pagehide"], [document, "visibilitychange"], [inp, "change"], [inp, "cancel"]];
+  evs.forEach(([t, e]) => t.addEventListener(e, hit));
+  const timer = setTimeout(() => { done(); if (!fired && document.visibilityState === "visible" && document.hasFocus()) openPhotoHelp(true); }, 1500);
+  const done = () => { clearTimeout(timer); evs.forEach(([t, e]) => t.removeEventListener(e, hit)); pickerWatch = null; };
+  pickerWatch = { done };
+}
+function imageFilesFrom(dt) {
+  if (!dt) return [];
+  const out = [...(dt.files || [])].filter(f => /^image\//.test(f.type));
+  if (!out.length) for (const it of dt.items || []) if (it.kind === "file" && /^image\//.test(it.type)) { const f = it.getAsFile(); if (f) out.push(f); }
+  return out;
+}
+function scanPicked(files) {
+  if (!files.length) return false;
+  closeSheet(); if (S.view !== "scan") setView("scan");
+  setTimeout(() => Scan.fromFiles(files).catch(err => toast("Scan failed: " + err.message, "bad")).finally(renderScanCtrls), 30);
+  return true;
+}
+function pasteBox() {
+  const ta = h("textarea", { class: "inp", id: "pasteIn", rows: 2, placeholder: TOUCH ? "Long-press here, then tap Paste to scan a copied photo" : "Click here and press Ctrl/⌘+V to scan a copied photo", "aria-label": "Paste a card photo", style: "resize:none;text-align:center" });
+  ta.addEventListener("paste", e => {
+    e.preventDefault(); e.stopPropagation();
+    if (!scanPicked(imageFilesFrom(e.clipboardData))) toast(TOUCH ? "No photo on the clipboard. In Photos or Gallery, open the card photo, tap Share → Copy, then paste here." : "No image on the clipboard. Copy a photo first.", "bad");
+  });
+  ta.addEventListener("input", () => { ta.value = ""; });
+  return ta;
+}
+function openPhotoHelp(blocked) {
+  const link = h("input", { class: "inp num", id: "webUrl", readonly: true, value: PUBLIC_URL, "aria-label": "Web version link" });
+  openSheet(h("div", { class: "stack" },
+    h("h2", {}, blocked ? "This app didn't open your photos" : "Add a photo another way"),
+    h("p", { class: "small muted", style: "margin:0" }, blocked ? "Claude's mobile app can block photo pickers inside artifacts. Use one of these instead:" : "If the photo buttons don't open anything on your phone, use one of these:"),
+    h("div", { class: "mk stack" }, h("h3", {}, "1 · Paste a photo"),
+      h("p", { class: "small muted", style: "margin:0" }, "Open the card photo in Photos or Gallery, tap Share → Copy. Come back, long-press the box and tap Paste."),
+      pasteBox()),
+    h("div", { class: "mk stack" }, h("h3", {}, "2 · Open in your phone's browser"),
+      h("p", { class: "small muted", style: "margin:0" }, "Safari or Chrome give you the live camera, stack scanning and live prices. Move your vault across with Export → Full backup, then Restore."),
+      h("div", { class: "row" }, h("a", { class: "btn primary", href: PUBLIC_URL, target: "_blank", rel: "noopener", html: ICON.cam + "Open with camera ↗" }), h("button", { class: "btn", onclick: () => copyText(PUBLIC_URL) }, "Copy link")), link),
+    h("div", { class: "mk stack" }, h("h3", {}, "3 · Try the picker again"),
+      h("div", { class: "row" }, TOUCH ? pickBtn("camIn", "btn", ICON.cam + "Take photo") : null, pickBtn("fileIn", "btn", ICON.img + "Choose photos")))));
+}
+document.addEventListener("paste", e => { if (e.target && e.target.id === "pasteIn") return; if (/^(INPUT|TEXTAREA)$/.test(e.target.tagName || "")) return; const f = imageFilesFrom(e.clipboardData); if (f.length) { e.preventDefault(); scanPicked(f); } });
+document.addEventListener("dragover", e => { if ([...(e.dataTransfer?.types || [])].includes("Files")) { e.preventDefault(); document.body.classList.add("dropping"); } });
+document.addEventListener("dragleave", e => { if (!e.relatedTarget) document.body.classList.remove("dropping"); });
+document.addEventListener("drop", e => { document.body.classList.remove("dropping"); const f = imageFilesFrom(e.dataTransfer); if (f.length) { e.preventDefault(); scanPicked(f); } });
+
 /* native <label for> opens the picker reliably on iOS, Android and inside the Claude frame */
+const TOUCH = matchMedia("(pointer: coarse)").matches || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 function pickBtn(inputId, cls, html) {
-  return h("label", { for: inputId, class: cls, role: "button", tabindex: 0, html,
+  return h("label", { for: inputId, class: cls, role: "button", tabindex: 0, html, onclick: () => armPickerWatch(inputId),
     onkeydown: e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("#" + inputId).click(); } } });
 }
 /* decode any photo the browser can show; createImageBitmap first, <img> fallback (older iOS, some HEIC) */
@@ -1133,8 +1190,10 @@ function viewScan() {
               : "Take a photo of each card front, filling the frame. Pick several at once to scan a stack. Claude reads each card and the grader measures it."),
             h("div", { class: "row", style: "justify-content:center" },
               web ? h("button", { class: "btn primary", onclick: () => Scan.start(), html: ICON.cam + "Start camera" }) : null,
-              web ? null : pickBtn("camIn", "btn primary", ICON.cam + "Take photo"),
-              pickBtn("fileIn", web ? "btn" : "btn", ICON.img + (web ? "Upload photos" : "Choose photos"))))),
+              !web && TOUCH ? pickBtn("camIn", "btn primary", ICON.cam + "Take photo") : null,
+              pickBtn("fileIn", web || TOUCH ? "btn" : "btn primary", ICON.img + (web ? "Upload photos" : "Choose photos"))),
+            ENV.claude ? h("p", { class: "small", style: "margin:12px auto 0;color:#b9bde6" }, TOUCH ? "Nothing opens? " : "Or drop photos here, or press Ctrl/⌘+V. ",
+              TOUCH ? h("button", { class: "btn sm", style: "margin-top:6px", onclick: () => openPhotoHelp(false) }, "Paste a photo instead") : null) : null)),
           h("div", { class: "flash", id: "flash" })),
         h("div", { class: "scan-ctrls", id: "scanCtrls" })),
       h("div", { class: "stack" },
@@ -1158,9 +1217,11 @@ function renderScanCtrls() {
       pickBtn("fileIn", "btn ghost", ICON.img + "Photos"),
       h("span", { class: "small muted" }, S.settings.stack ? "Auto-captures when the card is steady" : ""));
   } else if (!$("#stageIdle")?.hidden) {
+    if (ENV.claude) c.append(pasteBox());
     c.append(h("span", { class: "small muted" }, ENV.claude ? "Inside Claude the live camera isn't available, so card ID uses photos and Claude vision." : ENV.online ? "Card ID reads the name and collector number, then looks the card up live." : "Offline: card lookup is paused. Grading still works."));
   } else {
-    c.append(pickBtn("camIn", "btn primary", ICON.cam + "Take photo"), pickBtn("fileIn", "btn", ICON.img + "Choose photos"),
+    c.append(TOUCH ? pickBtn("camIn", "btn primary", ICON.cam + "Take photo") : null, pickBtn("fileIn", TOUCH ? "btn" : "btn primary", ICON.img + "Choose photos"),
+      ENV.claude && TOUCH ? h("button", { class: "btn ghost", onclick: () => openPhotoHelp(false) }, "Paste photo") : null,
       !ENV.claude && ENV.camera ? h("button", { class: "btn", onclick: () => Scan.start(), html: ICON.cam + "Live camera" }) : null);
   }
 }
