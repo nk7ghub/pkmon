@@ -45,6 +45,23 @@ To move a vault between modes: Export → Full backup (JSON), then Settings → 
   - Desktop (`TOUCH` false) shows only "Choose photos" plus the drop and paste hint; "Take photo" appears only on touch devices.
   - The "Open with camera" link only works once GitHub Pages is enabled.
 
+- 2026-10-12 (3): Cards photographed in Chrome were "not recognised". Causes:
+  - The user opened a downloaded copy (`content://`), which ran offline.
+  - Pages serves the default branch `ccr-fd6ba824-w6y900`, which only had v1.
+  - The photo crop assumed the card fills the frame.
+  - OCR read a 630 px downscale.
+  - The number regex missed `TG20/TG30`.
+  - A stray "null" button label.
+
+  Fix:
+  - `locateCard`: edge-continuity profiles plus a 63:88 pair search.
+  - OCR from a full-resolution crop with ~1.1k–1.8k px strips; multi-pass Tesseract (PSM 6/11, contrast/plain); stops at the first parsed number.
+  - `parseCardNumber` handles TG/GG/SV plus OCR noise; `nameInText` is a 4-gram fuzzy name filter.
+  - TCGdex backup (`dexFind`, `mapDex`, `fetchCardsAny`).
+  - Probe waits 20 s and checks both APIs; OCR timeouts (60 s load, 30 s per pass).
+  - On a miss, the scanner search box is filled with the OCR guess.
+  - Verified with real Tesseract on the user's Rayquaza photo: read `TG20/30` and matched swsh12tg-TG20 via pokemontcg.io and via TCGdex.
+
 ## Tested (headless Chromium, recorded API responses)
 - No JS errors; no sideways scroll at 400 px or 1280 px; light and dark themes.
 - Search → add → portfolio KPIs, INR conversion, detail page, raw/graded table, alert, sealed add, master-set %, CSV (29 columns), PDF (26 KB), text list, trade verdict, binder link round-trip.

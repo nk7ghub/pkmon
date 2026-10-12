@@ -440,6 +440,13 @@ async function cardsByIds(ids) {
   }
   return out;
 }
+/* pokemontcg.io ids in batches; "dex:" ids one by one from TCGdex */
+async function fetchCardsAny(ids) {
+  const p = ids.filter(i => !i.startsWith("dex:")), d = ids.filter(i => i.startsWith("dex:"));
+  const out = p.length && ENV.ptcg !== false ? await cardsByIds(p).catch(() => []) : [];
+  for (const id of d.slice(0, 60)) { try { out.push(mapDex(await dexGet("/cards/" + encodeURIComponent(id.slice(4))))); } catch { /* skip */ } }
+  return out;
+}
 async function allSets() {
   const d = await api(`/sets?orderBy=-releaseDate&pageSize=250&select=id,name,series,printedTotal,total,releaseDate,images,ptcgoCode`, { ttl: 7 * CACHE_TTL });
   return d.data || [];
@@ -450,11 +457,54 @@ async function setCardList(setId) {
 }
 async function probeOnline() {
   if (!navigator.onLine) return false;
-  try {
-    const ctrl = new AbortController(); setTimeout(() => ctrl.abort(), 8000);
-    const r = await fetch(API + "/sets?pageSize=1&select=id", { signal: ctrl.signal, headers: S.settings.apiKey ? { "X-Api-Key": S.settings.apiKey } : {} });
-    return r.ok || r.status === 429;
-  } catch { return false; }
+  const tryFetch = async (url, opts = {}, ms = 20000) => {
+    const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), ms);
+    try { const r = await fetch(url, { ...opts, signal: ctrl.signal }); return r.ok || r.status === 429; } catch { return false; } finally { clearTimeout(t); }
+  };
+  const [ptcg, dex] = await Promise.all([
+    tryFetch(API + "/sets?pageSize=1&select=id", { headers: S.settings.apiKey ? { "X-Api-Key": S.settings.apiKey } : {} }),
+    tryFetch(DEX + "/sets/base1")
+  ]);
+  ENV.ptcg = ptcg; ENV.dex = dex;
+  return ptcg || dex;
+}
+/* ---- TCGdex backup database (free, no key): used when pokemontcg.io is slow, down, or misses a card ---- */
+const DEX = "https://api.tcgdex.net/v2/en";
+const DEX_TCG = { normal: "normal", holofoil: "holofoil", "reverse-holofoil": "reverseHolofoil", "1st-edition": "1stEditionNormal", "1st-edition-holofoil": "1stEditionHolofoil", unlimited: "unlimited", "unlimited-holofoil": "unlimitedHolofoil" };
+function mapDex(d) {
+  const pr = d.pricing || {}, tp = pr.tcgplayer || null, cm = pr.cardmarket || null;
+  const tprices = {};
+  if (tp) for (const [k, v] of Object.entries(tp)) if (DEX_TCG[k] && v && typeof v === "object") tprices[DEX_TCG[k]] = { low: v.lowPrice ?? v.low, mid: v.midPrice ?? v.mid, high: v.highPrice ?? v.high, market: v.marketPrice ?? v.market };
+  const cc = (d.set && d.set.cardCount) || {};
+  return {
+    id: "dex:" + d.id, name: d.name, number: String(d.localId), rarity: d.rarity || "", subtypes: [], supertype: d.category || "",
+    set: { id: d.set ? d.set.id : "", name: d.set ? d.set.name : "", series: (d.set && d.set.serie && d.set.serie.name) || "", printedTotal: cc.official || null, total: cc.total || cc.official || null, ptcgoCode: "" },
+    images: { small: d.image ? d.image + "/low.webp" : null, large: d.image ? d.image + "/high.webp" : null },
+    tcgplayer: Object.keys(tprices).length ? { url: null, updatedAt: tp.updated || null, prices: tprices } : null,
+    cardmarket: cm ? { url: null, updatedAt: cm.updated || null, prices: { averageSellPrice: cm.avg, lowPrice: cm.low, trendPrice: cm.trend, avg1: cm.avg1, avg7: cm.avg7, avg30: cm.avg30, reverseHoloTrend: cm["trend-holo"], reverseHoloAvg1: cm["avg1-holo"], reverseHoloAvg7: cm["avg7-holo"], reverseHoloAvg30: cm["avg30-holo"] } } : null
+  };
+}
+async function dexGet(path, ttl = 6 * 36e5) {
+  const key = "dex:" + path, hit = LS.get(key, null);
+  if (hit && Date.now() - hit.t < ttl) return hit.d;
+  const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 20000);
+  try { const r = await fetch(DEX + path, { signal: ctrl.signal }); if (!r.ok) throw new Error("Backup card database answered " + r.status); const d = await r.json(); LS.set(key, { t: Date.now(), d }); return d; }
+  catch (e) { if (hit) return hit.d; throw e; } finally { clearTimeout(t); }
+}
+async function dexCards(list, max = 8) {
+  const out = [];
+  for (const b of (list || []).slice(0, max)) { try { out.push(mapDex(await dexGet("/cards/" + encodeURIComponent(b.id)))); } catch { /* skip one */ } }
+  return out;
+}
+async function dexFind({ number, total, name }) {
+  let list = [];
+  if (number) list = await dexGet("/cards?localId=eq:" + encodeURIComponent(number)).catch(() => []);
+  if (number && !list.length && /^\d+$/.test(number)) list = await dexGet("/cards?localId=eq:" + String(number).padStart(3, "0")).catch(() => []);
+  if (name && list.length > 1) { const w = name.toLowerCase(); const f = list.filter(c => w.includes(c.name.toLowerCase().split(/[\s-]/)[0])); if (f.length) list = f; }
+  if (!list.length && name) list = await dexGet("/cards?name=" + encodeURIComponent(name.split(" ")[0])).catch(() => []);
+  let cards = await dexCards(list, 10);
+  if (total) { const f = cards.filter(c => c.set.printedTotal == total); if (f.length) cards = f; }
+  return cards;
 }
 
 /* ---- currencies ---- */
@@ -610,10 +660,10 @@ function itemFromCard(card, extra = {}) {
 }
 async function refreshPrices({ quiet = false } = {}) {
   if (!ENV.online) return;
-  const ids = [...new Set(S.items.filter(i => i.kind === "card" && i.cardId).map(i => i.cardId))];
-  if (!ids.length) return;
+  const all = [...new Set(S.items.filter(i => i.kind === "card" && i.cardId).map(i => i.cardId))];
+  if (!all.length) return;
   try {
-    const cards = await cardsByIds(ids);
+    const cards = await fetchCardsAny(all);
     const map = new Map(cards.map(c => [c.id, c]));
     for (const it of S.items) {
       const c = map.get(it.cardId); if (!c) continue;
@@ -823,7 +873,7 @@ const Scan = {
     this.work.width = Grader.W + 24; this.work.height = Grader.H + 24;
     Foil.reset(); this.loop(); renderScanCtrls();
     try { await navigator.wakeLock?.request("screen"); } catch { /* optional */ }
-    if (ENV.online) this.loadOCR();
+    if (navigator.onLine) this.loadOCR();
   },
   stop() {
     cancelAnimationFrame(this.raf); this.raf = 0;
@@ -872,7 +922,9 @@ const Scan = {
     const shot = document.createElement("canvas"); shot.width = 630; shot.height = 880;
     shot.getContext("2d").drawImage(this.video, k.sx + k.sw * .043, k.sy + k.sh * .043, k.sw * .914, k.sh * .914, 0, 0, 630, 880);
     $("#flash").classList.remove("go"); void $("#flash").offsetWidth; $("#flash").classList.add("go");
-    try { await this.identify(shot, { ...this.grade }, Foil.guess(), auto); }
+    const hi = document.createElement("canvas"); hi.width = 1260; hi.height = 1760;
+    hi.getContext("2d").drawImage(this.video, k.sx + k.sw * .043, k.sy + k.sh * .043, k.sw * .914, k.sh * .914, 0, 0, 1260, 1760);
+    try { await this.identify(shot, { ...this.grade }, Foil.guess(), auto, hi); }
     finally { this.busy = false; renderScanCtrls(); this.stableSince = performance.now(); }
   },
   /* photos (artifact mode, or uploads on the web) */
@@ -884,21 +936,26 @@ const Scan = {
       const bmp = await decodeImage(f);
       if (!bmp) { failed++; done++; toast(`Couldn't open ${f.name || "that photo"}. Use a JPEG or PNG photo.`, "bad"); continue; }
       try {
-      // fit the card: assume it fills most of the photo; centre-crop to 63:88 with a margin
-      const ar = 63 / 88; let sw = bmp.width, sh = bmp.height;
-      if (sw / sh > ar) sw = sh * ar; else sh = sw / ar;
-      const sx = (bmp.width - sw) / 2, sy = (bmp.height - sh) / 2;
+      // find the card's edges in the photo; fall back to a centred 63:88 crop
+      let box = locateCard(bmp);
+      if (!box) { const ar = 63 / 88; let w = bmp.width, hh = bmp.height; if (w / hh > ar) w = hh * ar; else hh = w / ar; box = { x: (bmp.width - w) / 2, y: (bmp.height - hh) / 2, w, h: hh }; }
+      const pad = .045, gx0 = box.x - box.w * pad, gy0 = box.y - box.h * pad;
       const wc = document.createElement("canvas"); wc.width = Grader.W; wc.height = Grader.H;
-      wc.getContext("2d").drawImage(bmp, sx, sy, sw, sh, 0, 0, Grader.W, Grader.H);
-      const gr = Grader.analyze(wc.getContext("2d").getImageData(0, 0, Grader.W, Grader.H));
+      const wctx = wc.getContext("2d"); wctx.fillStyle = "#777"; wctx.fillRect(0, 0, Grader.W, Grader.H);
+      wctx.drawImage(bmp, gx0, gy0, box.w * (1 + 2 * pad), box.h * (1 + 2 * pad), 0, 0, Grader.W, Grader.H);
+      const gr = Grader.analyze(wctx.getImageData(0, 0, Grader.W, Grader.H));
       const shot = document.createElement("canvas"); shot.width = 630; shot.height = 880;
-      shot.getContext("2d").drawImage(bmp, sx, sy, sw, sh, 0, 0, 630, 880);
+      shot.getContext("2d").drawImage(bmp, box.x, box.y, box.w, box.h, 0, 0, 630, 880);
+      const hiW = Math.min(1260, Math.max(630, Math.round(box.w))), hi = document.createElement("canvas"); hi.width = hiW; hi.height = Math.round(hiW * 88 / 63);
+      // text reader gets a slightly larger crop so an edge found a little inside the card can't cut off the number line
+      const ex = { x: Math.max(0, box.x - box.w * .03), y: Math.max(0, box.y - box.h * .02) }; ex.w = Math.min(bmp.width - ex.x, box.w * 1.06); ex.h = Math.min(bmp.height - ex.y, box.h * 1.08);
+      hi.getContext("2d").drawImage(bmp, ex.x, ex.y, ex.w, ex.h, 0, 0, hi.width, hi.height);
       const still = $("#stageStill"); still.src = shot.toDataURL("image/jpeg", .85); still.hidden = false; $("#stageIdle").hidden = true;
       this.grade = gr; updateMeters(gr);
       const ov = $("#overlay"); const r = ov.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
       ov.width = r.width * dpr; ov.height = r.height * dpr; const ctx = ov.getContext("2d"); ctx.clearRect(0, 0, ov.width, ov.height);
       drawOverlay(ctx, this.guide(ov.width, ov.height), gr, dpr);
-      await this.identify(shot, gr, { kind: "unknown", p: 0 }, list.length > 1);
+      await this.identify(shot, gr, { kind: "unknown", p: 0 }, list.length > 1, hi);
       } catch (e) { failed++; console.warn("photo scan", e); toast("Scan failed: " + (e && e.message || e), "bad"); }
       done++;
     }
@@ -908,21 +965,30 @@ const Scan = {
     if (this.ocr || this.ocrLoading) return this.ocrLoading;
     this.ocrLoading = (async () => {
       await new Promise((res, rej) => { const s = h("script", { src: "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" }); s.onload = res; s.onerror = rej; document.head.append(s); });
-      this.ocr = await Tesseract.createWorker("eng");
+      this.ocr = await withTimeout(Tesseract.createWorker("eng"), 60000, "Text reader took too long to load. Check your connection and try again.");
       return this.ocr;
-    })().catch(e => { console.warn("OCR", e); this.ocrLoading = null; return null; });
+    })().catch(e => { console.warn("OCR", e); this.ocrLoading = null; this.ocr = null; toast(e.message || "Text reader failed to load", "bad"); return null; });
     return this.ocrLoading;
   },
   async ocrRead(shot) {
     const w = await this.loadOCR(); if (!w) return {};
-    const crop = (x, y, ww, hh, scale = 2.2) => { const c = document.createElement("canvas"); c.width = ww * scale; c.height = hh * scale; const k = c.getContext("2d"); k.filter = "grayscale(1) contrast(1.6)"; k.drawImage(shot, x, y, ww, hh, 0, 0, c.width, c.height); return c; };
-    const nameR = await w.recognize(crop(40, 22, 430, 70));
-    const botR = await w.recognize(crop(0, 790, 630, 90));
-    const name = (nameR.data.text || "").replace(/[^A-Za-zÀ-ÿ'’.\- ]/g, " ").replace(/\b(BASIC|STAGE\s?\d|HP)\b/gi, " ").replace(/\s+/g, " ").trim().split(" ").filter(x => x.length > 1).slice(0, 3).join(" ");
-    const m = (botR.data.text || "").replace(/[Oo]/g, "0").match(/(\d{1,3})\s*\/\s*(\d{2,3})/);
-    return { name, number: m ? String(+m[1]) : null, total: m ? +m[2] : null, raw: (nameR.data.text + " | " + botR.data.text).trim() };
+    const W = shot.width, H = shot.height;
+    // crop by fraction of the card; aim for ~1600 px wide strips so small print stays legible
+    const crop = (fx, fy, fw, fh, target = 1600, filter = "grayscale(1) contrast(1.7)") => { const ww = fw * W, hh = fh * H, sc = Math.min(4, target / ww); const c = document.createElement("canvas"); c.width = ww * sc; c.height = hh * sc; const k = c.getContext("2d"); k.filter = filter; k.drawImage(shot, fx * W, fy * H, ww, hh, 0, 0, c.width, c.height); return c; };
+    const rec = async (c, psm = "6") => { await w.setParameters({ tessedit_pageseg_mode: psm }); return (await withTimeout(w.recognize(c), 30000, "Reading the card took too long")).data.text || ""; };
+    const G = "grayscale(1)", GC = "grayscale(1) contrast(1.7)";
+    // several passes; small italic print on foil needs different crops and layout modes. Stop at the first readable number.
+    const numPasses = [[0, .84, .62, .16, 1600, GC, "6"], [.15, .9, .45, .07, 1400, GC, "6"], [0, .84, .62, .16, 1000, G, "11"], [.38, .84, .62, .16, 1600, GC, "6"], [.38, .84, .62, .16, 1000, G, "11"], [0, .86, 1, .14, 1800, GC, "11"]];
+    let text = "", num = null;
+    for (const [fx, fy, fw, fh, tg, flt, psm] of numPasses) { const t = await rec(crop(fx, fy, fw, fh, tg, flt), psm); text += "\n" + t; num = parseCardNumber(t); if (num) break; }
+    const nameT = (await rec(crop(.03, .01, .8, .12, 1400, GC), "11")) + "\n" + (await rec(crop(.03, .01, .8, .12, 1000, G), "3"));
+    text = nameT + "\n" + text;
+    const STOP = /^(VMAX|VSTAR|BASIC|STAGE|EVOLVES|FROM|ABILITY|POKEMON|POKÉMON|TRAINER|ITEM|SUPPORTER|RULE)$/i;
+    const name = (nameT.match(/[A-Za-zÀ-ÿ'’.\-]{4,}/g) || []).filter(x => !STOP.test(x)).sort((a, b) => b.length - a.length).slice(0, 1).join(" ");
+    const raw = text.replace(/\s+/g, " ").trim();
+    return { name, number: num && num.number, total: num && num.total, text: text.toLowerCase(), raw };
   },
-  async identify(shot, gr, foil, auto) {
+  async identify(shot, gr, foil, auto, hi) {
     const thumb = (() => { const t = document.createElement("canvas"); t.width = 126; t.height = 176; t.getContext("2d").drawImage(shot, 0, 0, 126, 176); return t.toDataURL("image/jpeg", .72); })();
     const cond = { corners: +gr.corners.toFixed(1), edges: +gr.edges.toFixed(1), surface: +gr.surface.toFixed(1), centering: +gr.centering.toFixed(1), overall: gr.overall, lr: Math.round(gr.lr), tb: Math.round(gr.tb), by: "pixels" };
     setResult({ state: "working", thumb, cond });
@@ -934,12 +1000,25 @@ const Scan = {
           const q = `name:"${ai.name.replace(/"/g, "")}"` + (ai.number ? ` number:${String(ai.number).replace(/\D.*$/, "")}` : "");
           candidates = await searchCards(q, 12).catch(() => []);
         }
-      } else if (ENV.online) {
-        const o = await this.ocrRead(shot);
-        note = o.raw ? "Read: " + o.raw.slice(0, 60) : "";
-        if (o.number && o.total) candidates = await searchCards(`number:${o.number} set.printedTotal:${o.total}`, 24).catch(() => []);
-        if (o.name && candidates.length > 1) { const nm = o.name.toLowerCase().split(" ")[0]; const f = candidates.filter(c => c.name.toLowerCase().includes(nm)); if (f.length) candidates = f; }
-        if (!candidates.length && o.name) candidates = await searchCards(`name:"${o.name.split(" ")[0]}*"`, 12).catch(() => []);
+      } else if (navigator.onLine) {
+        setScanStep("Reading the card number and name…");
+        const o = await this.ocrRead(hi || shot);
+        this.lastOCR = o;
+        note = o.number ? `Read #${o.number}${o.total ? "/" + o.total : ""}${o.name ? " · " + o.name : ""}` : (o.raw ? "Read: " + o.raw.slice(0, 60) : "");
+        const byText = list => { if (list.length < 2 || !o.text) return list; const f = list.filter(c => nameInText(c.name, o.text)); return f.length ? f : list; };
+        if (ENV.ptcg !== false) {
+          setScanStep("Looking up the card…");
+          if (o.number && o.total) candidates = await searchCards(`number:${o.number} set.printedTotal:${o.total}`, 30).catch(() => []);
+          if (!candidates.length && o.number) candidates = await searchCards(`number:${o.number}`, 60).catch(() => []);
+          candidates = byText(candidates);
+          if (candidates.length > 1 && o.total) { const f = candidates.filter(c => c.set.printedTotal == o.total); if (f.length) candidates = f; }
+          if (!candidates.length && o.name) candidates = await searchCards(`name:"${o.name.split(" ")[0]}*"`, 12).catch(() => []);
+        }
+        if (!candidates.length && (o.number || o.name)) {
+          setScanStep("Checking the backup card database…");
+          candidates = byText(await dexFind(o).catch(() => []));
+        }
+        if (!candidates.length && !o.number && !o.name) note = "Couldn't read any text. Fill the frame with the card, avoid glare on the bottom line, and keep it sharp.";
       }
       found = candidates[0] || null;
     } catch (e) { note = e.message || String(e); }
@@ -949,6 +1028,7 @@ const Scan = {
     if (item && ai) { item.ai = { variantNote: ai.variantNote, gradeNote: ai.gradeNote, estGrade: ai.estGrade }; if (ai.estUSD && !item.prices?.tcg) item.aiEstUSD = ai.estUSD; }
     if (item) item.cond.foil = foil.kind !== "unknown" ? foil.kind : (ai && ai.foil) || null;
     setResult({ state: item ? "found" : "miss", item, candidates: candidates.slice(1, 6), thumb, cond, note });
+    if (!item && this.lastOCR && this.lastOCR.name) { const sb = $("#scanSearch"); if (sb) { sb.value = this.lastOCR.name + (this.lastOCR.number ? " " + this.lastOCR.number : ""); sb.dispatchEvent(new Event("input")); } }
     if (item && (auto || S.settings.stack)) {
       if (this.stream && this.lastAddedId === (item.cardId || item.name) && Date.now() - this.lastAddedAt < 6000) return; // live-camera double-capture guard only
       addItem(item, { quiet: true }); S.stackSession.unshift(item); this.lastAddedId = item.cardId || item.name; this.lastAddedAt = Date.now();
@@ -956,6 +1036,59 @@ const Scan = {
     }
   }
 };
+
+/* Find the card in a photo: the card outline is the longest straight, continuous edge on each side */
+function locateCard(bmp) {
+  const sc = 480 / Math.max(bmp.width, bmp.height), W = Math.round(bmp.width * sc), H = Math.round(bmp.height * sc);
+  const c = document.createElement("canvas"); c.width = W; c.height = H; const x = c.getContext("2d", { willReadFrequently: true });
+  x.drawImage(bmp, 0, 0, W, H); const d = x.getImageData(0, 0, W, H).data;
+  const G = new Float32Array(W * H); for (let i = 0, p = 0; i < W * H; i++, p += 4) G[i] = .299 * d[p] + .587 * d[p + 1] + .114 * d[p + 2];
+  const thr = 16, col = new Float32Array(W), row = new Float32Array(H);
+  for (let xx = 1; xx < W - 1; xx++) { let n = 0; for (let y = (H * .25) | 0; y < H * .75; y++) if (Math.abs(G[y * W + xx + 1] - G[y * W + xx - 1]) > thr) n++; col[xx] = n; }
+  for (let y = 1; y < H - 1; y++) { let n = 0; for (let xx = (W * .25) | 0; xx < W * .75; xx++) if (Math.abs(G[(y + 1) * W + xx] - G[(y - 1) * W + xx]) > thr) n++; row[y] = n; }
+  const sm = a => a.map((v, i) => (a[i - 1] || 0) * .5 + v + (a[i + 1] || 0) * .5);
+  const cs = sm(col), rs = sm(row);
+  const best = (a, lo, hi) => { let bi = -1, bv = -1; for (let i = Math.max(1, lo | 0); i < Math.min(a.length - 1, hi | 0); i++) if (a[i] > bv) { bv = a[i]; bi = i; } return [bi, bv]; };
+  const AR = 63 / 88;
+  // pair search: start i plus an edge at i+len (±4%) — both edges must be strong
+  const pair = (a, len, lo, hi) => { const tol = Math.max(2, len * .04); let bi = -1, bv = -1, bj = -1;
+    for (let i = Math.max(1, lo | 0); i < hi && i + len - tol < a.length - 1; i++) { let mj = -1, mv = -1; for (let j = Math.round(i + len - tol); j <= Math.min(a.length - 2, Math.round(i + len + tol)); j++) if (a[j] > mv) { mv = a[j]; mj = j; } if (a[i] + mv > bv) { bv = a[i] + mv; bi = i; bj = mj; } }
+    return [bi, bj, bv]; };
+  const opts = [];
+  { const [l] = best(cs, W * .01, W * .45), [r] = best(cs, W * .55, W * .995), w = r - l;
+    if (w > W * .3) { const [t, b, v] = pair(rs, w / AR, H * .005, H * .5); if (t >= 0) opts.push({ l, r, t, b, score: (cs[l] + cs[r]) / (H * .5) + v / (W * .5) }); } }
+  { const [t] = best(rs, H * .01, H * .45), [b] = best(rs, H * .55, H * .995), hh = b - t;
+    if (hh > H * .3) { const [l, r, v] = pair(cs, hh * AR, W * .005, W * .5); if (l >= 0) opts.push({ l, r, t, b, score: (rs[t] + rs[b]) / (W * .5) + v / (H * .5) }); } }
+  opts.sort((p1, p2) => p2.score - p1.score);
+  const o = opts[0]; if (!o || o.score < .9) return null;
+  const w = o.r - o.l, hh = o.b - o.t;
+  if (w < W * .3 || hh < H * .3) return null;
+  return { x: o.l / sc, y: o.t / sc, w: w / sc, h: hh / sc };
+}
+/* Collector number from OCR text: 057/195, 25/165, TG20/TG30, GG35/GG70, SV107/SV122, SWSH050 */
+function normNum(n) { const m = String(n).toUpperCase().match(/^([A-Z]{0,4})0*(\d+)$/); return m ? (m[1] ? m[1] + m[2] : String(+m[2])) : String(n).toUpperCase(); }
+function parseCardNumber(t) {
+  if (!t) return null;
+  const s = t.toUpperCase().replace(/[|\\]/g, "/").replace(/(\d)O/g, "$10").replace(/O(\d)/g, "0$1");
+  // Trainer / Galarian Gallery: TG20/TG30, GG35/GG70 (OCR often drops or mangles the T: "G20/1G30")
+  let m = s.match(/(GG|[T1I7L]?G)\s?(\d{1,2})\s*\/\s*[T1I7L]?G{1,2}\s?(\d{2})\b/);
+  if (m) return { number: (m[1] === "GG" || /GG\s?\d{2}\b/.test(s) ? "GG" : "TG") + String(+m[2]), total: +m[3] };
+  m = s.match(/\bSV\s?(\d{1,3})\s*\/\s*SV\s?(\d{2,3})\b/);
+  if (m) return { number: "SV" + String(+m[1]), total: +m[2] };
+  m = s.replace(/(\d)\s*[Il]\s*(\d{2,3})\b/g, "$1/$2").match(/\b(\d{1,3})\s*\/\s*(\d{2,3})\b/);
+  if (m && +m[2] >= 10 && +m[1] <= +m[2] + 120) return { number: String(+m[1]), total: +m[2] };
+  m = s.match(/\b(SWSH|SM|XY|BW)\s?(\d{2,3})\b/);
+  if (m) return { number: m[1] + m[2], total: null };
+  return null;
+}
+/* fuzzy: does OCR text contain the card's name? any 4-letter run of the first word counts */
+function nameInText(name, text) {
+  const w = name.toLowerCase().split(/[\s-]/)[0]; if (!text) return false; if (text.includes(w)) return true;
+  for (let i = 0; i + 4 <= w.length; i++) if (text.includes(w.slice(i, i + 4))) return true;
+  return false;
+}
+function withTimeout(pr, ms, msg) { let t; return Promise.race([pr, new Promise((_, rej) => { t = setTimeout(() => rej(new Error(msg)), ms); })]).finally(() => clearTimeout(t)); }
+function setScanStep(msg) { const r = $("#resultBox .scanstep"); if (r) r.textContent = msg; }
 
 /* Claude vision (artifact viewer): identify + variant + grading read, strict JSON */
 async function claudeIdentify(shot, foil) {
@@ -1203,7 +1336,7 @@ function viewScan() {
           h("div", { class: "tray", id: "tray" })),
         h("div", { class: "glass panel stack" },
           h("h2", {}, "Find a card by name"),
-          searchBox(card => { addItem(itemFromCard(card)); }))))
+          searchBox(card => { addItem(itemFromCard(card)); }, { inputId: "scanSearch" }))))
   );
   queueMicrotask(() => { renderScanCtrls(); setResult(S._lastResult || { state: "idle" }); renderTray(); });
   return v;
@@ -1220,9 +1353,9 @@ function renderScanCtrls() {
     if (ENV.claude) c.append(pasteBox());
     c.append(h("span", { class: "small muted" }, ENV.claude ? "Inside Claude the live camera isn't available, so card ID uses photos and Claude vision." : ENV.online ? "Card ID reads the name and collector number, then looks the card up live." : "Offline: card lookup is paused. Grading still works."));
   } else {
-    c.append(TOUCH ? pickBtn("camIn", "btn primary", ICON.cam + "Take photo") : null, pickBtn("fileIn", TOUCH ? "btn" : "btn primary", ICON.img + "Choose photos"),
+    c.append(...[TOUCH ? pickBtn("camIn", "btn primary", ICON.cam + "Take photo") : null, pickBtn("fileIn", TOUCH ? "btn" : "btn primary", ICON.img + "Choose photos"),
       ENV.claude && TOUCH ? h("button", { class: "btn ghost", onclick: () => openPhotoHelp(false) }, "Paste photo") : null,
-      !ENV.claude && ENV.camera ? h("button", { class: "btn", onclick: () => Scan.start(), html: ICON.cam + "Live camera" }) : null);
+      !ENV.claude && ENV.camera && window.isSecureContext ? h("button", { class: "btn", onclick: () => Scan.start(), html: ICON.cam + "Live camera" }) : null].filter(Boolean));
   }
 }
 function setResult(r) {
@@ -1239,13 +1372,14 @@ function setResult(r) {
     h("div", { class: "stack", style: "gap:7px" }, ...[["Corners", c.corners], ["Edges", c.edges], ["Surface", c.surface], ["Centering", c.centering]].map(([k, v]) =>
       h("div", { class: "mrow" }, h("span", { class: "muted" }, k), h("span", { class: "bar" }, h("i", { style: `width:${v * 10}%` })), h("span", { class: "num", style: "text-align:right;font-weight:700" }, v.toFixed(1)))),
       h("div", { class: "small muted num" }, `L/R ${c.lr}/${100 - c.lr} · T/B ${c.tb}/${100 - c.tb} · ${Grader.label(c.overall)}`)));
-  if (r.state === "working") { box.append(h("div", { class: "row", style: "margin-bottom:12px" }, h("span", { class: "spin" }), h("b", {}, ENV.cap.sample && ENV.aiImages ? "Claude is reading the card…" : "Reading name and number…")), gb); return; }
+  if (r.state === "working") { box.append(h("div", { class: "row", style: "margin-bottom:12px" }, h("span", { class: "spin" }), h("b", { class: "scanstep" }, ENV.cap.sample && ENV.aiImages ? "Claude is reading the card…" : "Loading the text reader…")), gb); return; }
   if (r.state === "miss") {
     box.append(h("div", { class: "result" }, h("img", { class: "thumb", src: r.thumb, alt: "" }),
       h("div", { class: "stack", style: "gap:6px" }, h("h2", {}, "Card not recognised"),
         h("p", { class: "small muted", style: "margin:0" }, ENV.cap.sample && ENV.aiImages ? "Fill the frame with one card, in even light with less glare, then try again." + (r.note ? " " + r.note : "")
           : ENV.claude ? "Claude card reading is switched off for this page. Allow it in the page's Permissions menu, then scan again. The grade below was still measured."
-          : ENV.online ? "Try steadier light with less glare, or search by name below. " + (r.note || "") : "Card lookup needs an internet connection. Search by name once online."),
+          : navigator.onLine ? (r.note ? r.note + ". " : "") + "Pick it from the search below, or retake with the bottom line sharp and glare-free."
+          : "No internet connection. Card lookup needs one; the grade below was still measured."),
         ENV.claude && !(ENV.cap.sample && ENV.aiImages) ? h("button", { class: "btn sm", onclick: () => window.claude.use("permissions").then(pm => pm && pm.manage()).catch(() => toast("Open the Permissions menu at the top of this page.", "bad")) }, "Open permissions") : null)),
       h("div", { style: "margin-top:12px" }, gb));
     return;
@@ -1277,24 +1411,27 @@ function renderTray() {
   for (const it of S.stackSession) t.append(h("button", { class: "t", style: "border:0;background:none;cursor:pointer;color:inherit", onclick: () => openDetail(it) }, cardImg(it), h("div", { class: "num" }, money(unitUSD(it)))));
   $("#trayTotal").textContent = `${S.stackSession.length} cards · ${money(S.stackSession.reduce((a, b) => a + unitUSD(b), 0))}`;
 }
-function searchBox(onPick, { placeholder = "e.g. Charizard ex 199" } = {}) {
+function searchBox(onPick, { placeholder = "e.g. Charizard ex 199 or Rayquaza TG20", inputId } = {}) {
   const res = h("div", { class: "list" });
-  const inp = h("input", { class: "inp", type: "search", placeholder, id: "q" + Math.random().toString(36).slice(2, 6), "aria-label": "Card name" });
+  const inp = h("input", { class: "inp", type: "search", placeholder, id: inputId || "q" + Math.random().toString(36).slice(2, 6), "aria-label": "Card name" });
   let timer, ctrl;
   const run = async () => {
     const q = inp.value.trim(); res.innerHTML = ""; if (q.length < 2) return;
     if (!ENV.online) { res.append(h("div", { class: "small muted" }, ENV.claude ? "Live card search runs on the web version (link in Settings). Here, scan a photo and Claude identifies it." : "Search needs an internet connection.")); return; }
     res.append(h("div", { class: "small muted" }, h("span", { class: "spin" }), " Searching…"));
-    const m = q.match(/^(.*?)\s+(\d{1,3})(?:\s*\/\s*(\d{1,3}))?$/);
-    const query = m ? `name:"${m[1].replace(/"/g, "")}*" number:${m[2]}` : `name:"${q.replace(/"/g, "")}*"`;
+    const m = q.match(/^(.*?)\s+#?([A-Za-z]{0,3}\d{1,3})(?:\s*\/\s*[A-Za-z]{0,3}(\d{1,3}))?$/);
+    const nm = (m ? m[1] : q).replace(/"/g, "").trim(), numQ = m ? normNum(m[2]) : null;
+    const query = numQ ? `name:"${nm}*" number:${numQ}` : `name:"${nm}*"`;
     try {
-      const cards = await searchCards(query, 18); res.innerHTML = "";
+      let cards = ENV.ptcg !== false ? await searchCards(query, 18).catch(() => []) : [];
+      if (!cards.length) cards = await dexFind({ number: numQ, total: m && m[3] ? +m[3] : null, name: nm }).catch(() => []);
+      res.innerHTML = "";
       if (!cards.length) res.append(h("div", { class: "small muted" }, "No cards match. Check spelling or drop the number."));
       for (const c of cards) {
         const t = c.tcgplayer && c.tcgplayer.prices, k = t && Object.keys(t)[0], mk = k && (t[k].market || t[k].mid);
         res.append(h("div", { class: "item", tabindex: 0, onclick: () => onPick(c), onkeydown: e => e.key === "Enter" && onPick(c) },
-          h("img", { src: c.images.small, alt: "", loading: "lazy" }),
-          h("div", { style: "min-width:0" }, h("div", { class: "nm" }, c.name), h("div", { class: "meta" }, `${c.set.name} · ${c.number}/${c.set.printedTotal}`, c.rarity ? h("span", { class: "chip" }, c.rarity) : null)),
+          c.images.small ? h("img", { src: c.images.small, alt: "", loading: "lazy" }) : ph(c),
+          h("div", { style: "min-width:0" }, h("div", { class: "nm" }, c.name), h("div", { class: "meta" }, `${c.set.name} · ${c.number}/${c.set.printedTotal || "?"}`, c.rarity ? h("span", { class: "chip" }, c.rarity) : null)),
           h("div", { class: "val" }, h("div", { class: "num" }, mk ? money(mk) : "—"), h("div", { class: "small muted" }, "Add +"))));
       }
     } catch (e) { res.innerHTML = ""; res.append(h("div", { class: "small", style: "color:var(--bad)" }, e.message)); }
@@ -1864,7 +2001,7 @@ async function renderBinder(code) {
   const sum = h("div", { class: "kpis" }); v.append(sum, h("div", { class: "glass panel" }, grid));
   const ids = data.c.map(c => c[0]).filter(Boolean);
   let map = new Map();
-  try { map = new Map((await cardsByIds(ids)).map(c => [c.id, c])); } catch (e) { toast(e.message, "bad"); }
+  try { map = new Map((await fetchCardsAny(ids)).map(c => [c.id, c])); } catch (e) { toast(e.message, "bad"); }
   grid.innerHTML = ""; let total = 0, n = 0;
   for (const [id, q, variant, grade, name] of data.c) {
     const card = map.get(id); const it = card ? itemFromCard(card, { variant }) : { name: name || id, kind: "card", qty: q, prices: null, tags: [] };
