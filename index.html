@@ -1,0 +1,1908 @@
+<title>PKmon Card Vault</title>
+<meta name="theme-color" content="#0B0E1C">
+<meta name="description" content="Scan, grade, price and track a Pokémon TCG collection.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700;800&family=Figtree:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap">
+<style>
+/* Layout: one-screen app, glass panels floating over slow holo-foil light blobs; bottom nav on phones, centred column on desktop */
+:root{
+  --bg:#EDEFFA; --ink:#15173A; --ink-2:#4A4F78; --ink-3:#7A7FA6;
+  --glass:rgba(255,255,255,.58); --glass-hi:rgba(255,255,255,.82); --glass-lo:rgba(255,255,255,.34);
+  --stroke:rgba(255,255,255,.85); --edge:rgba(21,23,58,.10); --shade:rgba(46,52,130,.18);
+  --fire:#E8361A; --water:#1C7FE0; --volt:#E9A800; --grass:#0F9D63; --psy:#C2338F;
+  --good:#0E9F6E; --bad:#D92D4C; --warn:#C77700;
+  --b1:#FF8CC6; --b2:#55D3FF; --b3:#FFD84D; --b4:#86F0A6;
+  --font-d:"Unbounded","Arial Black",system-ui,sans-serif;
+  --font-b:"Figtree",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-m:"JetBrains Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+  --r-lg:22px; --r-md:16px; --r-sm:11px;
+  --blur:18px;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#080A16; --ink:#ECEEFF; --ink-2:#A7ACD3; --ink-3:#6E739C;
+  --glass:rgba(24,28,58,.55); --glass-hi:rgba(40,46,92,.72); --glass-lo:rgba(255,255,255,.04);
+  --stroke:rgba(255,255,255,.13); --edge:rgba(255,255,255,.08); --shade:rgba(0,0,0,.45);
+  --fire:#FF6347; --water:#4FB3FF; --volt:#FFD23F; --grass:#3EE08F; --psy:#F06BC0;
+  --good:#34D399; --bad:#FB6B85; --warn:#FFB547;
+  --b1:#8E1E63; --b2:#0A5F8E; --b3:#76580C; --b4:#11603B; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#080A16; --ink:#ECEEFF; --ink-2:#A7ACD3; --ink-3:#6E739C;
+  --glass:rgba(24,28,58,.55); --glass-hi:rgba(40,46,92,.72); --glass-lo:rgba(255,255,255,.04);
+  --stroke:rgba(255,255,255,.13); --edge:rgba(255,255,255,.08); --shade:rgba(0,0,0,.45);
+  --fire:#FF6347; --water:#4FB3FF; --volt:#FFD23F; --grass:#3EE08F; --psy:#F06BC0;
+  --good:#34D399; --bad:#FB6B85; --warn:#FFB547;
+  --b1:#8E1E63; --b2:#0A5F8E; --b3:#76580C; --b4:#11603B; color-scheme:dark}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--font-b);font-size:15px;line-height:1.45;overflow-x:hidden;-webkit-tap-highlight-color:transparent}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--water);outline-offset:2px}
+.num{font-family:var(--font-m);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+
+/* ambient holo light */
+.aura{position:fixed;inset:-20vmax;z-index:0;pointer-events:none;filter:blur(60px) saturate(1.2);opacity:.9}
+.aura i{position:absolute;width:46vmax;height:46vmax;border-radius:50%;mix-blend-mode:normal;animation:drift 26s ease-in-out infinite alternate}
+.aura i:nth-child(1){background:var(--b1);left:8%;top:6%}
+.aura i:nth-child(2){background:var(--b2);right:4%;top:22%;animation-duration:32s;animation-delay:-8s}
+.aura i:nth-child(3){background:var(--b3);left:26%;bottom:4%;animation-duration:29s;animation-delay:-14s}
+.aura i:nth-child(4){background:var(--b4);right:22%;bottom:16%;animation-duration:35s;animation-delay:-4s;width:34vmax;height:34vmax}
+@keyframes drift{0%{transform:translate(0,0) scale(1)}50%{transform:translate(6vmax,-5vmax) scale(1.12)}100%{transform:translate(-5vmax,4vmax) scale(.94)}}
+
+/* glass */
+.glass{position:relative;background:linear-gradient(155deg,var(--glass-hi),var(--glass) 42%,var(--glass-lo));
+  -webkit-backdrop-filter:blur(var(--blur)) saturate(1.6);backdrop-filter:blur(var(--blur)) saturate(1.6);
+  border:1px solid var(--stroke);border-radius:var(--r-lg);
+  box-shadow:0 1px 0 var(--stroke) inset,0 -1px 0 var(--edge) inset,0 18px 40px -18px var(--shade),0 2px 6px -2px var(--shade)}
+.glass.flat{box-shadow:0 1px 0 var(--stroke) inset,0 6px 18px -10px var(--shade)}
+.tilt{transform-style:preserve-3d;transition:transform .35s cubic-bezier(.2,.9,.3,1.2)}
+
+/* shell */
+.app{position:relative;z-index:1;min-height:100%;display:flex;flex-direction:column}
+.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;display:flex;align-items:center;gap:10px;padding:10px 16px;margin:10px 12px 0;border-radius:18px}
+.brand{display:flex;align-items:center;gap:9px;font-family:var(--font-d);font-weight:800;font-size:17px;letter-spacing:-.02em}
+.brand svg{width:28px;height:28px}
+.mode{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;padding:4px 9px;border-radius:99px;border:1px solid var(--edge);color:var(--ink-2);white-space:nowrap}
+.mode b{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--good);margin-right:6px;box-shadow:0 0 0 3px color-mix(in srgb,var(--good) 25%,transparent)}
+.mode.off b{background:var(--warn)}
+.top .sp{flex:1}
+.icon-btn{display:grid;place-items:center;width:38px;height:38px;border-radius:12px;border:1px solid var(--edge);background:var(--glass-lo);cursor:pointer}
+.icon-btn svg{width:19px;height:19px}
+.sel{appearance:none;border:1px solid var(--edge);background:var(--glass-lo);border-radius:12px;padding:8px 28px 8px 11px;font-weight:600;font-size:13px;cursor:pointer;
+  background-image:linear-gradient(45deg,transparent 50%,var(--ink-2) 50%),linear-gradient(135deg,var(--ink-2) 50%,transparent 50%);background-position:calc(100% - 15px) 52%,calc(100% - 10px) 52%;background-size:5px 5px;background-repeat:no-repeat}
+.sel option{background:var(--bg);color:var(--ink)}
+main{flex:1;width:100%;max-width:1120px;margin:0 auto;padding:16px 16px 120px}
+.view{display:grid;gap:16px;animation:rise .45s cubic-bezier(.2,.9,.3,1) both}
+@keyframes rise{from{opacity:.4;transform:translateY(10px) scale(.99)}to{opacity:1;transform:none}}
+h1,h2,h3{font-family:var(--font-d);letter-spacing:-.02em;text-wrap:balance;margin:0}
+h1{font-size:clamp(22px,4.6vw,30px);font-weight:800}
+h2{font-size:17px;font-weight:700}
+h3{font-size:14px;font-weight:700}
+.eyebrow{font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:var(--ink-3)}
+.muted{color:var(--ink-2)}
+.small{font-size:12.5px}
+.panel{padding:16px}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.row.between{justify-content:space-between}
+.grid2{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr))}
+.stack{display:grid;gap:12px}
+
+/* buttons, chips */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:1px solid var(--edge);background:var(--glass-hi);border-radius:13px;padding:10px 15px;font-weight:700;font-size:14px;cursor:pointer;transition:transform .15s,box-shadow .2s,background .2s;white-space:nowrap}
+.btn:hover{transform:translateY(-1px);box-shadow:0 8px 20px -10px var(--shade)}
+.btn:active{transform:translateY(1px) scale(.98)}
+.btn svg{width:17px;height:17px}
+.btn.primary{background:linear-gradient(135deg,var(--fire),color-mix(in srgb,var(--fire) 60%,var(--volt)));color:#fff;border-color:transparent;box-shadow:0 10px 24px -12px var(--fire)}
+.btn.blue{background:linear-gradient(135deg,var(--water),color-mix(in srgb,var(--water) 55%,var(--grass)));color:#fff;border-color:transparent}
+.btn.ghost{background:transparent}
+.btn.sm{padding:7px 11px;font-size:13px;border-radius:11px}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:99px;border:1px solid var(--edge);background:var(--glass-lo);white-space:nowrap}
+.chip.foil{background:linear-gradient(110deg,#ff9ad5,#ffe48a,#8ff0c4,#8fd3ff,#d4a5ff);color:#1a1a33;border-color:transparent}
+.chip.secret{background:var(--volt);color:#1d1600;border-color:transparent}
+.chip.alt{background:var(--psy);color:#fff;border-color:transparent}
+.chip.good{color:var(--good)} .chip.bad{color:var(--bad)}
+.seg{display:inline-flex;padding:3px;border-radius:12px;border:1px solid var(--edge);background:var(--glass-lo);gap:2px}
+.seg button{border:0;background:transparent;padding:6px 12px;border-radius:9px;font-weight:700;font-size:12.5px;cursor:pointer;color:var(--ink-2)}
+.seg button[aria-pressed="true"]{background:var(--glass-hi);color:var(--ink);box-shadow:0 2px 8px -3px var(--shade)}
+.switch{position:relative;width:46px;height:27px;flex:none}
+.switch input{position:absolute;opacity:0;inset:0;cursor:pointer;z-index:1}
+.switch span{position:absolute;inset:0;border-radius:99px;background:var(--edge);transition:background .2s}
+.switch span::after{content:"";position:absolute;left:3px;top:3px;width:21px;height:21px;border-radius:50%;background:#fff;box-shadow:0 2px 6px rgba(0,0,0,.25);transition:transform .25s cubic-bezier(.3,1.4,.5,1)}
+.switch input:checked+span{background:var(--grass)}
+.switch input:checked+span::after{transform:translateX(19px)}
+.field{display:grid;gap:5px}
+.field label{font-size:12px;font-weight:700;color:var(--ink-2)}
+.inp{width:100%;border:1px solid var(--edge);background:var(--glass-lo);border-radius:12px;padding:10px 12px;min-width:0}
+.inp::placeholder{color:var(--ink-3)}
+
+/* scanner */
+.stage{position:relative;border-radius:var(--r-lg);overflow:hidden;aspect-ratio:3/4;max-height:66vh;width:100%;background:#05060d;margin-inline:auto}
+@media (min-width:900px){.stage{aspect-ratio:4/3;max-height:560px}}
+.stage video,.stage canvas,.stage img.still{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.stage .hud{position:absolute;left:10px;right:10px;top:10px;display:flex;gap:8px;flex-wrap:wrap;z-index:3}
+.hud .chip{background:rgba(8,10,22,.55);color:#fff;border-color:rgba(255,255,255,.18);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
+.stage .meters{position:absolute;left:10px;right:10px;bottom:10px;display:grid;grid-template-columns:repeat(4,1fr);gap:6px;z-index:3}
+.meter{background:rgba(8,10,22,.55);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.16);border-radius:12px;padding:6px 8px;color:#fff}
+.meter .k{font-size:10px;letter-spacing:.08em;text-transform:uppercase;opacity:.75;font-weight:700}
+.meter .v{font-family:var(--font-m);font-size:16px;font-weight:700}
+.meter .bar{height:4px;border-radius:4px;background:rgba(255,255,255,.18);margin-top:4px;overflow:hidden}
+.meter .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#ff6b5a,#ffd23f,#3ee08f);transition:width .4s}
+.stage .idle{position:absolute;inset:0;display:grid;place-items:center;text-align:center;color:#e8eaff;padding:24px;z-index:2;
+  background:radial-gradient(120% 80% at 50% 0%,rgba(85,211,255,.18),transparent 60%),radial-gradient(120% 80% at 50% 100%,rgba(255,140,198,.16),transparent 60%)}
+.idle p{max-width:34ch;margin:8px auto 16px;color:#b9bde6}
+.flash{position:absolute;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:4}
+.flash.go{animation:flash .45s ease-out}
+@keyframes flash{0%{opacity:.75}100%{opacity:0}}
+.scan-ctrls{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.result{display:grid;grid-template-columns:96px 1fr;gap:14px;align-items:start}
+.result .thumb{width:96px;aspect-ratio:63/88;border-radius:8px;object-fit:cover;background:var(--glass-lo);border:1px solid var(--edge)}
+.tray{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px;scroll-snap-type:x mandatory}
+.tray .t{flex:none;width:84px;scroll-snap-align:start;text-align:center;font-size:11px}
+.tray .t img,.tray .t .ph{width:84px;aspect-ratio:63/88;border-radius:7px;object-fit:cover;border:1px solid var(--edge);background:var(--glass-lo);display:block;margin-bottom:4px}
+.tray .t{animation:pop .4s cubic-bezier(.3,1.5,.5,1) both}
+@keyframes pop{from{transform:scale(.6) rotate(-6deg);opacity:0}to{transform:none;opacity:1}}
+.gradebox{display:grid;grid-template-columns:auto 1fr;gap:16px;align-items:center}
+.gradeball{width:92px;height:92px;border-radius:50%;display:grid;place-items:center;text-align:center;font-family:var(--font-d);font-weight:800;font-size:28px;line-height:1;
+  background:conic-gradient(var(--grass) calc(var(--p,0)*1%),var(--edge) 0);position:relative}
+.gradeball::before{content:"";position:absolute;inset:7px;border-radius:50%;background:var(--bg)}
+.gradeball span{position:relative}
+.gradeball small{display:block;font-family:var(--font-b);font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--ink-3);margin-top:3px}
+.mrow{display:grid;grid-template-columns:78px 1fr 46px;gap:8px;align-items:center;font-size:13px}
+.mrow .bar{height:7px;border-radius:7px;background:var(--edge);overflow:hidden}
+.mrow .bar i{display:block;height:100%;border-radius:7px;background:linear-gradient(90deg,var(--fire),var(--volt),var(--grass));transition:width .5s cubic-bezier(.2,.9,.3,1)}
+
+/* KPIs + chart */
+.kpis{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,150px),1fr))}
+.kpi{padding:14px 16px}
+.kpi .v{font-family:var(--font-m);font-size:clamp(21px,3.6vw,27px);font-weight:700;margin-top:4px;font-variant-numeric:tabular-nums}
+.kpi .d{font-size:12.5px;font-weight:700;margin-top:2px}
+.up{color:var(--good)} .down{color:var(--bad)}
+.chart{width:100%;height:220px;display:block}
+.chart text{fill:var(--ink-3);font-family:var(--font-m);font-size:10px}
+
+/* tabs */
+.tabs{display:flex;gap:6px;overflow-x:auto;padding:4px;border-radius:16px}
+.tabs button{flex:none;border:0;background:transparent;padding:9px 14px;border-radius:12px;font-weight:700;color:var(--ink-2);cursor:pointer}
+.tabs button[aria-selected="true"]{background:var(--glass-hi);color:var(--ink);box-shadow:0 4px 12px -6px var(--shade)}
+
+/* collection list */
+.list{display:grid;gap:8px}
+.item{display:grid;grid-template-columns:46px 1fr auto;gap:12px;align-items:center;padding:9px 12px;border-radius:16px;cursor:pointer;transition:transform .2s,background .2s;border:1px solid transparent}
+.item:hover{background:var(--glass-lo);border-color:var(--edge);transform:translateX(2px)}
+.item img,.item .ph{width:46px;aspect-ratio:63/88;border-radius:5px;object-fit:cover;background:var(--glass-lo);border:1px solid var(--edge)}
+.ph{display:grid;place-items:center;font-family:var(--font-d);font-size:13px;color:var(--ink-3)}
+.item .nm{font-weight:700;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item .meta{font-size:12px;color:var(--ink-2);display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:2px}
+.item .val{text-align:right}
+.item .val .num{font-weight:700}
+.group-h{display:flex;justify-content:space-between;align-items:baseline;padding:10px 4px 2px;border-bottom:1px solid var(--edge);margin-top:6px}
+.empty{padding:28px 16px;text-align:center;color:var(--ink-2)}
+.empty h3{color:var(--ink);margin-bottom:6px}
+
+/* progress */
+.prog{height:12px;border-radius:12px;background:var(--edge);overflow:hidden;position:relative}
+.prog i{position:absolute;inset:0 auto 0 0;border-radius:12px;background:linear-gradient(90deg,var(--water),var(--psy),var(--fire),var(--volt));background-size:300% 100%;animation:sheen 6s linear infinite;transition:width .8s cubic-bezier(.2,.9,.3,1)}
+@keyframes sheen{to{background-position:300% 0}}
+.setcard{display:grid;gap:8px;padding:14px}
+.setcard img{height:30px;width:auto;max-width:120px;object-fit:contain}
+
+/* price compare */
+.markets{display:grid;gap:10px;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr))}
+.mk{padding:12px 14px;border-radius:16px;border:1px solid var(--edge);background:var(--glass-lo)}
+.mk h3{display:flex;justify-content:space-between;align-items:center;font-size:13px}
+.mk dl{display:grid;grid-template-columns:1fr auto;gap:3px 10px;margin:8px 0 0;font-size:13px}
+.mk dt{color:var(--ink-2)} .mk dd{margin:0;text-align:right;font-family:var(--font-m);font-weight:700;font-variant-numeric:tabular-nums}
+.mk a{font-size:12px;font-weight:700;color:var(--water);text-decoration:none}
+.est{font-size:10px;font-weight:800;letter-spacing:.08em;color:var(--warn);text-transform:uppercase}
+
+/* sheet */
+.scrim{position:fixed;inset:0;z-index:40;background:rgba(6,8,20,.45);-webkit-backdrop-filter:blur(4px);backdrop-filter:blur(4px);display:flex;align-items:flex-end;justify-content:center;animation:fade .25s both}
+@keyframes fade{from{opacity:0}}
+.sheet{width:100%;max-width:760px;max-height:92%;overflow:auto;border-radius:26px 26px 0 0;padding:18px 16px calc(24px + env(safe-area-inset-bottom,0px));animation:up .4s cubic-bezier(.2,.9,.3,1) both;background:var(--bg)}
+.sheet.glass{background:linear-gradient(155deg,color-mix(in srgb,var(--bg) 82%,var(--glass-hi)),color-mix(in srgb,var(--bg) 94%,transparent))}
+@media (min-width:800px){.scrim{align-items:center}.sheet{border-radius:26px;max-height:88%}}
+@keyframes up{from{transform:translateY(40px);opacity:.3}}
+.grab{width:42px;height:5px;border-radius:5px;background:var(--edge);margin:0 auto 12px}
+.detail-hero{display:grid;grid-template-columns:minmax(0,180px) 1fr;gap:18px;align-items:start}
+@media (max-width:520px){.detail-hero{grid-template-columns:1fr}.detail-hero .holo{max-width:220px;margin-inline:auto}}
+.holo{position:relative;border-radius:12px;overflow:hidden;aspect-ratio:63/88;background:var(--glass-lo);transform:perspective(800px) rotateX(var(--rx,0deg)) rotateY(var(--ry,0deg));transition:transform .2s ease-out;box-shadow:0 20px 40px -18px var(--shade)}
+.detail-hero .holo,.result .holo{width:100%}
+.holo img,.holo .ph{width:100%;height:100%;object-fit:cover;display:grid}
+.holo .ph{font-size:28px;background:linear-gradient(135deg,var(--glass-hi),var(--glass-lo))}
+.holo::after{content:"";position:absolute;inset:0;mix-blend-mode:color-dodge;opacity:var(--ho,0);transition:opacity .3s;
+  background:radial-gradient(circle at var(--mx,50%) var(--my,50%),rgba(255,255,255,.55),transparent 45%),linear-gradient(115deg,transparent 20%,rgba(255,120,200,.35) 35%,rgba(120,220,255,.35) 50%,rgba(255,230,120,.35) 65%,transparent 80%);background-size:100% 100%,250% 250%;background-position:center,var(--mx,50%) var(--my,50%)}
+.holo:hover::after{--ho:.85}
+
+/* trade */
+.trade{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:640px){.trade{grid-template-columns:1fr}}
+.side{padding:14px;display:grid;gap:10px;align-content:start;min-width:0}
+.side.mine{border-top:3px solid var(--water)}
+.side.theirs{border-top:3px solid var(--fire)}
+.tline{display:grid;grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:8px 10px;border-radius:12px;background:var(--glass-lo);border:1px solid var(--edge);font-size:13.5px}
+.tline .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
+.x{border:0;background:transparent;cursor:pointer;color:var(--ink-3);font-size:18px;line-height:1;padding:2px 4px}
+.beam{position:relative;height:90px;perspective:600px}
+.beam .bar{position:absolute;left:8%;right:8%;top:30px;height:10px;border-radius:10px;background:linear-gradient(90deg,var(--water),var(--ink-3),var(--fire));transform:rotate(var(--tilt,0deg));transition:transform .8s cubic-bezier(.3,1.6,.5,1)}
+.beam .pivot{position:absolute;left:50%;top:38px;width:0;height:0;border-left:16px solid transparent;border-right:16px solid transparent;border-bottom:26px solid var(--ink-2);transform:translateX(-50%)}
+.fair{font-family:var(--font-d);font-size:30px;font-weight:800}
+
+/* bottom nav */
+.nav{position:fixed;left:50%;bottom:0;transform:translateX(-50%);z-index:30;width:min(560px,calc(100% - 20px));margin-bottom:calc(10px + env(safe-area-inset-bottom,0px));display:grid;grid-template-columns:repeat(4,1fr);padding:6px;border-radius:22px}
+.nav button{border:0;background:transparent;display:grid;justify-items:center;gap:3px;padding:7px 4px;border-radius:16px;font-size:11px;font-weight:700;color:var(--ink-3);cursor:pointer;transition:color .2s,background .25s,transform .2s}
+.nav button svg{width:22px;height:22px}
+.nav button[aria-current="page"]{color:var(--ink);background:var(--glass-hi);box-shadow:0 6px 16px -8px var(--shade);transform:translateY(-2px)}
+.nav button[aria-current="page"] svg{color:var(--fire)}
+
+/* toast */
+.toasts{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(96px + env(safe-area-inset-bottom,0px));z-index:60;display:grid;gap:8px;width:min(440px,calc(100% - 32px))}
+.toast{padding:11px 14px;border-radius:14px;font-weight:600;font-size:14px;animation:up .35s cubic-bezier(.2,.9,.3,1) both;display:flex;gap:10px;align-items:center}
+.toast.bad{border-color:color-mix(in srgb,var(--bad) 50%,transparent)}
+
+/* binder */
+.binder{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(140px,1fr))}
+.binder figure{margin:0;display:grid;gap:6px;font-size:12px}
+.binder figcaption{display:flex;justify-content:space-between;gap:6px}
+table.t{width:100%;border-collapse:collapse;font-size:13px}
+table.t th,table.t td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--edge)}
+table.t td.n,table.t th.n{text-align:right;font-family:var(--font-m);font-variant-numeric:tabular-nums}
+.scrollx{overflow-x:auto}
+.spin{width:16px;height:16px;border-radius:50%;border:2px solid var(--edge);border-top-color:var(--fire);animation:rot .8s linear infinite;display:inline-block;vertical-align:-3px}
+@keyframes rot{to{transform:rotate(360deg)}}
+.kbd{font-family:var(--font-m);font-size:12px;padding:1px 6px;border-radius:6px;border:1px solid var(--edge)}
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}.aura i{animation:none}}
+</style>
+
+<div class="aura" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+<div class="app">
+  <header class="top glass flat">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF6B9F"/><stop offset=".5" stop-color="#FFD23F"/><stop offset="1" stop-color="#4FB3FF"/></linearGradient></defs><rect x="6" y="2.5" width="20" height="27" rx="3.5" fill="url(#lg)"/><rect x="9" y="6" width="14" height="11" rx="1.5" fill="#fff" opacity=".85"/><circle cx="16" cy="11.5" r="3" fill="#E8361A"/><rect x="9" y="20" width="14" height="2" rx="1" fill="#fff" opacity=".85"/><rect x="9" y="24" width="8" height="2" rx="1" fill="#fff" opacity=".7"/></svg>
+      <span>PKmon</span>
+    </div>
+    <span class="mode" id="modeChip"><b></b><span>Starting…</span></span>
+    <span class="sp"></span>
+    <select class="sel" id="curSel" aria-label="Display currency"></select>
+    <button class="icon-btn" id="themeBtn" aria-label="Switch theme" title="Switch theme"></button>
+  </header>
+  <main id="main"></main>
+</div>
+<nav class="nav glass" aria-label="Sections">
+  <button data-v="scan"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><rect x="8" y="6.5" width="8" height="11" rx="1.2"/></svg>Scanner</button>
+  <button data-v="port"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m7 15 4-4 3 3 5-6"/></svg>Portfolio</button>
+  <button data-v="trade"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4 3 8l4 4M3 8h13M17 20l4-4-4-4M21 16H8"/></svg>Trade</button>
+  <button data-v="set"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Settings</button>
+</nav>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div id="sheetRoot"></div>
+<input type="file" id="fileIn" accept="image/*" capture="environment" multiple hidden>
+<input type="file" id="restoreIn" accept="application/json,.json" hidden>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script>
+"use strict";
+/* ============ PKmon core: env, state, storage, API, currency, pricing ============ */
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const h = (tag, attrs = {}, ...kids) => {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v == null || v === false) continue;
+    if (k === "class") el.className = v;
+    else if (k === "html") el.innerHTML = v;
+    else if (k.startsWith("on")) el.addEventListener(k.slice(2), v);
+    else if (k === "style") el.style.cssText = v;
+    else el.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of kids.flat()) if (c != null && c !== false) el.append(c.nodeType ? c : document.createTextNode(String(c)));
+  return el;
+};
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const today = () => new Date().toISOString().slice(0, 10);
+
+const API = "https://api.pokemontcg.io/v2";
+const PUBLIC_URL = "https://nk7ghub.github.io/tamil1-ghub/PKmon-v1.html";
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem("pkmon:" + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem("pkmon:" + k, JSON.stringify(v)); } catch { /* storage blocked or full */ } }
+};
+
+/* ---- environment: Claude artifact viewer vs open web ---- */
+const ENV = {
+  claude: !!(window.claude && typeof window.claude.use === "function"),
+  online: false,       // can reach pokemontcg.io
+  camera: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+  cap: { db: null, sample: null, downloads: null, user: null },
+  uid: null, aiImages: false
+};
+
+/* ---- state ---- */
+const S = {
+  items: LS.get("items", []),       // cards + sealed
+  alerts: LS.get("alerts", []),
+  sets: LS.get("sets", []),         // tracked master sets [{id,name,series,printedTotal,total,logo}]
+  history: LS.get("history", []),   // [{d, v, c}] daily portfolio snapshots (USD)
+  settings: Object.assign({ cur: "USD", theme: "system", apiKey: "", src: "tcg", stack: true, sound: true, notify: false, master: true }, LS.get("settings", {})),
+  rates: LS.get("rates", null),     // {base:"USD", t, r:{...}, src}
+  view: "scan", ptab: "cards", trade: LS.get("trade", { mine: [], theirs: [] }),
+  stackSession: []
+};
+
+/* ---- persistence: localStorage always; Claude db mirror when available ---- */
+const writeChains = new Map();
+function dbWrite(path, fn) {
+  const prev = writeChains.get(path) || Promise.resolve();
+  const next = prev.then(fn).catch(e => { if (e && e.code === "quota_exceeded") toast("Cloud storage is full. Remove some items or export a backup.", "bad"); });
+  writeChains.set(path, next);
+  return next;
+}
+function userRoot() { return ENV.cap.db && ENV.uid ? ENV.cap.db.doc("data/users/" + ENV.uid + "/vault") : null; }
+const Store = {
+  saveItem(it) {
+    LS.set("items", S.items);
+    const root = userRoot(); if (!root) return;
+    const ref = root.collection("items").doc(it.id);
+    dbWrite(ref.path, () => ref.set(JSON.parse(JSON.stringify(it))));
+  },
+  removeItem(id) {
+    LS.set("items", S.items);
+    const root = userRoot(); if (!root) return;
+    const ref = root.collection("items").doc(id);
+    dbWrite(ref.path, () => ref.delete());
+  },
+  saveAlert(a) {
+    LS.set("alerts", S.alerts);
+    const root = userRoot(); if (!root) return;
+    const ref = root.collection("alerts").doc(a.id);
+    dbWrite(ref.path, () => ref.set({ ...a }));
+  },
+  removeAlert(id) {
+    LS.set("alerts", S.alerts);
+    const root = userRoot(); if (!root) return;
+    const ref = root.collection("alerts").doc(id);
+    dbWrite(ref.path, () => ref.delete());
+  },
+  saveMeta() {
+    LS.set("sets", S.sets); LS.set("history", S.history); LS.set("settings", S.settings);
+    const root = userRoot(); if (!root) return;
+    const body = { sets: S.sets, history: S.history.slice(-400), settings: { ...S.settings, apiKey: "" } };
+    clearTimeout(Store._mt);
+    Store._mt = setTimeout(() => dbWrite(root.path, () => root.set(body)), 800);
+  },
+  async loadCloud() {
+    const root = userRoot(); if (!root) return false;
+    try {
+      const [meta, items, alerts] = await Promise.all([root.get(), root.collection("items").limit(1000).get(), root.collection("alerts").limit(500).get()]);
+      if (items.size || meta.exists) {
+        S.items = items.docs.map(d => ({ ...d.data() }));
+        S.alerts = alerts.docs.map(d => ({ ...d.data() }));
+        if (meta.exists) {
+          const m = meta.data();
+          S.sets = m.sets ? [...m.sets] : S.sets;
+          S.history = m.history ? [...m.history] : S.history;
+          if (m.settings) S.settings = Object.assign({}, S.settings, m.settings, { apiKey: S.settings.apiKey });
+        }
+        LS.set("items", S.items); LS.set("alerts", S.alerts); LS.set("sets", S.sets); LS.set("history", S.history);
+      } else if (S.items.length) {
+        // first cloud visit: push local collection up
+        for (const it of S.items) Store.saveItem(it);
+        for (const a of S.alerts) Store.saveAlert(a);
+        Store.saveMeta();
+      }
+      return true;
+    } catch (e) { console.warn("cloud load", e); return false; }
+  }
+};
+
+/* ---- pokemontcg.io client with 24h cache ---- */
+const CACHE_TTL = 864e5;
+async function api(path, { ttl = CACHE_TTL, signal } = {}) {
+  const key = "api:" + path;
+  const hit = LS.get(key, null);
+  if (hit && Date.now() - hit.t < ttl) return hit.d;
+  const headers = S.settings.apiKey ? { "X-Api-Key": S.settings.apiKey } : {};
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15000);
+  signal && signal.addEventListener("abort", () => ctrl.abort());
+  try {
+    const r = await fetch(API + path, { headers, signal: ctrl.signal });
+    if (r.status === 429) throw Object.assign(new Error("Card database rate limit reached. Add a free API key in Settings or wait an hour."), { code: 429 });
+    if (!r.ok) throw new Error("Card database answered " + r.status);
+    const d = await r.json();
+    LS.set(key, { t: Date.now(), d });
+    return d;
+  } catch (e) {
+    if (hit) return hit.d;         // stale cache beats nothing
+    throw e;
+  } finally { clearTimeout(timer); }
+}
+const SELECT = "id,name,number,rarity,subtypes,supertype,set,images,tcgplayer,cardmarket";
+async function searchCards(q, pageSize = 24) {
+  const d = await api(`/cards?q=${encodeURIComponent(q)}&pageSize=${pageSize}&orderBy=-set.releaseDate&select=${SELECT}`, { ttl: 6 * 36e5 });
+  return d.data || [];
+}
+async function cardsByIds(ids) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += 40) {
+    const chunk = ids.slice(i, i + 40);
+    const q = "(" + chunk.map(id => "id:" + id).join(" OR ") + ")";
+    const d = await api(`/cards?q=${encodeURIComponent(q)}&pageSize=250&select=${SELECT}`, { ttl: 6 * 36e5 });
+    out.push(...(d.data || []));
+  }
+  return out;
+}
+async function allSets() {
+  const d = await api(`/sets?orderBy=-releaseDate&pageSize=250&select=id,name,series,printedTotal,total,releaseDate,images,ptcgoCode`, { ttl: 7 * CACHE_TTL });
+  return d.data || [];
+}
+async function setCardList(setId) {
+  const d = await api(`/cards?q=${encodeURIComponent("set.id:" + setId)}&pageSize=250&select=id,name,number,rarity,images`, { ttl: 7 * CACHE_TTL });
+  return d.data || [];
+}
+async function probeOnline() {
+  if (!navigator.onLine) return false;
+  try {
+    const ctrl = new AbortController(); setTimeout(() => ctrl.abort(), 8000);
+    const r = await fetch(API + "/sets?pageSize=1&select=id", { signal: ctrl.signal, headers: S.settings.apiKey ? { "X-Api-Key": S.settings.apiKey } : {} });
+    return r.ok || r.status === 429;
+  } catch { return false; }
+}
+
+/* ---- currencies ---- */
+const CURRENCIES = {
+  USD: ["US Dollar", "$", 1], EUR: ["Euro", "€", .92], GBP: ["British Pound", "£", .78], JPY: ["Japanese Yen", "¥", 150],
+  CNY: ["Chinese Yuan", "¥", 7.2], INR: ["Indian Rupee", "₹", 84], AUD: ["Australian Dollar", "A$", 1.52], CAD: ["Canadian Dollar", "C$", 1.37],
+  CHF: ["Swiss Franc", "CHF ", .88], HKD: ["Hong Kong Dollar", "HK$", 7.8], SGD: ["Singapore Dollar", "S$", 1.33], KRW: ["South Korean Won", "₩", 1370],
+  NZD: ["New Zealand Dollar", "NZ$", 1.66], SEK: ["Swedish Krona", "kr ", 10.5], NOK: ["Norwegian Krone", "kr ", 10.8], DKK: ["Danish Krone", "kr ", 6.85],
+  PLN: ["Polish Złoty", "zł ", 3.95], CZK: ["Czech Koruna", "Kč ", 23], HUF: ["Hungarian Forint", "Ft ", 365], RON: ["Romanian Leu", "lei ", 4.6],
+  TRY: ["Turkish Lira", "₺", 34], ZAR: ["South African Rand", "R ", 18.2], BRL: ["Brazilian Real", "R$", 5.5], MXN: ["Mexican Peso", "MX$", 19.5],
+  ILS: ["Israeli Shekel", "₪", 3.7], AED: ["UAE Dirham", "AED ", 3.6725], SAR: ["Saudi Riyal", "SAR ", 3.75], THB: ["Thai Baht", "฿", 34],
+  MYR: ["Malaysian Ringgit", "RM ", 4.4], IDR: ["Indonesian Rupiah", "Rp ", 16000], PHP: ["Philippine Peso", "₱", 57], TWD: ["New Taiwan Dollar", "NT$", 32],
+  VND: ["Vietnamese Dong", "₫", 25000]
+};
+const ZERO_DEC = new Set(["JPY", "KRW", "IDR", "VND", "HUF"]);
+function rate(code) { return (S.rates && S.rates.r && S.rates.r[code]) || CURRENCIES[code][2]; }
+function usdToEur() { return rate("EUR"); }
+async function loadRates() {
+  if (S.rates && Date.now() - S.rates.t < 12 * 36e5) return;
+  const tries = [
+    async () => { const r = await fetch("https://open.er-api.com/v6/latest/USD"); const d = await r.json(); if (d.result !== "success") throw 0; return { r: d.rates, src: "open.er-api.com" }; },
+    async () => { const r = await fetch("https://api.frankfurter.app/latest?from=USD"); const d = await r.json(); return { r: { USD: 1, ...d.rates }, src: "Frankfurter (ECB)" }; }
+  ];
+  for (const t of tries) {
+    try { const x = await t(); const r = {}; for (const c in CURRENCIES) r[c] = x.r[c] || CURRENCIES[c][2]; S.rates = { t: Date.now(), r, src: x.src }; LS.set("rates", S.rates); return; } catch { /* next */ }
+  }
+}
+function money(usd, { cur = S.settings.cur, sign = false, compact = false } = {}) {
+  if (usd == null || isNaN(usd)) return "—";
+  const v = usd * rate(cur);
+  const sym = CURRENCIES[cur][1];
+  const dec = ZERO_DEC.has(cur) ? 0 : (Math.abs(v) >= 1000 && compact ? 0 : 2);
+  let s = Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+  if (compact && Math.abs(v) >= 1e6) s = (Math.abs(v) / 1e6).toFixed(2) + "M";
+  return (v < 0 ? "−" : sign && v > 0 ? "+" : "") + sym + s;
+}
+const pct = (x, sign = true) => x == null || !isFinite(x) ? "—" : (x > 0 && sign ? "+" : x < 0 ? "−" : "") + Math.abs(x * 100).toFixed(1) + "%";
+
+/* ---- pricing ---- */
+const VARIANT_LABEL = { normal: "Normal", holofoil: "Holofoil", reverseHolofoil: "Reverse Holo", "1stEditionHolofoil": "1st Ed. Holo", "1stEditionNormal": "1st Ed.", unlimitedHolofoil: "Unlimited Holo", unlimited: "Unlimited" };
+function snapshotPrices(card) {
+  return {
+    tcg: card.tcgplayer ? { url: card.tcgplayer.url, upd: card.tcgplayer.updatedAt, p: card.tcgplayer.prices || {} } : null,
+    cm: card.cardmarket ? { url: card.cardmarket.url, upd: card.cardmarket.updatedAt, p: card.cardmarket.prices || {} } : null,
+    t: Date.now(), src: "live"
+  };
+}
+function variantsOf(it) { return Object.keys((it.prices && it.prices.tcg && it.prices.tcg.p) || {}); }
+function tcgRow(it) {
+  const p = it.prices && it.prices.tcg && it.prices.tcg.p; if (!p) return null;
+  return p[it.variant] || p[Object.keys(p)[0]] || null;
+}
+function cmTrendUSD(it) {
+  const p = it.prices && it.prices.cm && it.prices.cm.p; if (!p) return null;
+  const rev = it.variant === "reverseHolofoil";
+  const eur = rev ? (p.reverseHoloTrend || p.trendPrice) : (p.trendPrice || p.averageSellPrice);
+  return eur ? eur / usdToEur() : null;
+}
+/** Raw (ungraded) unit value in USD, by preferred source with fallbacks */
+function rawUSD(it) {
+  if (it.kind === "sealed") return it.value || 0;
+  if (it.manualValue) return it.manualValue;
+  const t = tcgRow(it); const tm = t && (t.market || t.mid || t.low);
+  const cm = cmTrendUSD(it);
+  if (S.settings.src === "cm") return cm || tm || it.aiEstUSD || 0;
+  return tm || cm || it.aiEstUSD || 0;
+}
+/* Graded premiums: model, not market data. Multipliers fall as raw value rises; a floor reflects grading cost. */
+const GRADES = [
+  { co: "PSA", g: 10 }, { co: "PSA", g: 9 }, { co: "PSA", g: 8 }, { co: "BGS", g: 10 }, { co: "BGS", g: 9.5 }, { co: "BGS", g: 9 }, { co: "CGC", g: 10 }, { co: "CGC", g: 9.5 }, { co: "CGC", g: 9 }
+];
+function gradedUSD(raw, co, g) {
+  if (!raw) return null;
+  const tier = raw < 10 ? 0 : raw < 50 ? 1 : raw < 250 ? 2 : 3;
+  const M = {
+    "PSA10": [5.0, 3.2, 2.3, 1.8], "PSA9": [2.2, 1.5, 1.25, 1.1], "PSA8": [1.4, 1.1, .95, .85],
+    "BGS10": [7.0, 4.5, 3.2, 2.5], "BGS9.5": [3.0, 2.0, 1.6, 1.35], "BGS9": [1.6, 1.2, 1.05, .95],
+    "CGC10": [4.0, 2.6, 1.9, 1.5], "CGC9.5": [2.0, 1.4, 1.2, 1.05], "CGC9": [1.3, 1.05, .95, .88]
+  }[co + g];
+  if (!M) return raw;
+  const floor = { 10: 28, 9.5: 22, 9: 18, 8: 14 }[g] || 12;
+  return Math.max(floor, raw * M[tier]);
+}
+function unitUSD(it) {
+  const raw = rawUSD(it);
+  if (it.kind === "card" && it.grade && it.grade.co && it.grade.co !== "RAW") return gradedUSD(raw, it.grade.co, it.grade.g) || raw;
+  return raw;
+}
+function totals() {
+  let v = 0, c = 0, cards = 0, sealed = 0;
+  for (const it of S.items) { const q = it.qty || 1; v += unitUSD(it) * q; c += (it.paid || 0) * q; it.kind === "sealed" ? sealed += q : cards += q; }
+  return { v, c, g: v - c, gp: c ? (v - c) / c : null, cards, sealed };
+}
+function snapshotHistory() {
+  const t = totals(); const d = today();
+  const last = S.history[S.history.length - 1];
+  if (last && last.d === d) { last.v = t.v; last.c = t.c; } else S.history.push({ d, v: t.v, c: t.c });
+  S.history = S.history.slice(-730);
+  Store.saveMeta();
+}
+/* Trend series: Cardmarket 30/7/1-day averages per held card + your own daily snapshots */
+function trendSeries(range) {
+  const now = Date.now(), day = 864e5, span = range === "1y" ? 365 : 30;
+  const pts = new Map();
+  if (S.items.length) {
+    const anchor = { 30: 0, 7: 0, 1: 0 }; let have = false;
+    for (const it of S.items) {
+      const q = it.qty || 1, u = unitUSD(it);
+      const p = it.prices && it.prices.cm && it.prices.cm.p;
+      const tr = p && (it.variant === "reverseHolofoil" ? p.reverseHoloTrend || p.trendPrice : p.trendPrice);
+      for (const k of [30, 7, 1]) {
+        const a = p && (it.variant === "reverseHolofoil" ? p["reverseHoloAvg" + k] : p["avg" + k]);
+        if (a && tr) { anchor[k] += u * q * (a / tr); have = true; } else anchor[k] += u * q;
+      }
+    }
+    if (have) for (const k of [30, 7, 1]) pts.set(new Date(now - k * day).toISOString().slice(0, 10), { v: anchor[k], recon: true });
+  }
+  for (const h of S.history) pts.set(h.d, { v: h.v });
+  pts.set(today(), { v: totals().v });
+  return [...pts.entries()].map(([d, o]) => ({ t: Date.parse(d), v: o.v, recon: !!o.recon }))
+    .filter(p => p.t >= now - span * day - day).sort((a, b) => a.t - b.t);
+}
+
+/* ---- link builders ---- */
+const ebaySold = it => "https://www.ebay.com/sch/i.html?_nkw=" + encodeURIComponent(`pokemon ${it.name} ${it.number || ""}${it.printedTotal ? "/" + it.printedTotal : ""} ${it.setName || ""}${it.grade && it.grade.co !== "RAW" && it.grade.co ? " " + it.grade.co + " " + it.grade.g : ""}`.replace(/\s+/g, " ").trim()) + "&LH_Sold=1&LH_Complete=1&_sop=13";
+const psaSearch = it => "https://www.psacard.com/auctionprices/search?q=" + encodeURIComponent(`${it.name} ${it.setName || ""}`);
+const p130 = it => "https://130point.com/sales/?q=" + encodeURIComponent(`${it.name} ${it.number || ""}`);
+const tcgSearch = it => (it.prices && it.prices.tcg && it.prices.tcg.url) || "https://www.tcgplayer.com/search/pokemon/product?q=" + encodeURIComponent(it.name + " " + (it.number || ""));
+const cmSearch = it => (it.prices && it.prices.cm && it.prices.cm.url) || "https://www.cardmarket.com/en/Pokemon/Products/Search?searchString=" + encodeURIComponent(it.name);
+
+/* ---- card → item ---- */
+function rarityTags(card) {
+  const r = (card.rarity || "").toLowerCase(); const tags = [];
+  const n = parseInt(card.number, 10), pt = card.set && card.set.printedTotal;
+  if ((pt && n > pt) || /secret|hyper|rainbow|gold/.test(r)) tags.push("secret");
+  if (/illustration|alternate|alt art|trainer gallery|character/.test(r) || (card.subtypes || []).some(s => /illustration/i.test(s))) tags.push("alt");
+  return tags;
+}
+function itemFromCard(card, extra = {}) {
+  const prices = snapshotPrices(card);
+  const vars = Object.keys(prices.tcg ? prices.tcg.p : {});
+  let variant = extra.variant && vars.includes(extra.variant) ? extra.variant : (vars.includes("holofoil") && !vars.includes("normal") ? "holofoil" : vars[0] || "normal");
+  if (extra.foilGuess === "reverse" && vars.includes("reverseHolofoil")) variant = "reverseHolofoil";
+  if (extra.foilGuess === "holo" && vars.includes("holofoil")) variant = "holofoil";
+  return {
+    id: uid(), kind: "card", cardId: card.id, name: card.name, number: card.number, rarity: card.rarity || "",
+    setId: card.set && card.set.id, setName: card.set && card.set.name, series: card.set && card.set.series,
+    printedTotal: card.set && card.set.printedTotal, setTotal: card.set && card.set.total, setCode: card.set && card.set.ptcgoCode,
+    img: card.images && card.images.small, imgL: card.images && card.images.large,
+    variant, tags: rarityTags(card), qty: 1, paid: extra.paid || 0, cond: extra.cond || null, grade: { co: "RAW", g: null },
+    prices, thumb: extra.thumb || null, added: Date.now(), notes: ""
+  };
+}
+async function refreshPrices({ quiet = false } = {}) {
+  if (!ENV.online) return;
+  const ids = [...new Set(S.items.filter(i => i.kind === "card" && i.cardId).map(i => i.cardId))];
+  if (!ids.length) return;
+  try {
+    const cards = await cardsByIds(ids);
+    const map = new Map(cards.map(c => [c.id, c]));
+    for (const it of S.items) {
+      const c = map.get(it.cardId); if (!c) continue;
+      it.prices = snapshotPrices(c);
+      if (!it.img && c.images) { it.img = c.images.small; it.imgL = c.images.large; }
+      Store.saveItem(it);
+    }
+    snapshotHistory(); checkAlerts();
+    if (!quiet) toast("Prices updated from TCGplayer and Cardmarket");
+  } catch (e) { if (!quiet) toast(e.message || "Could not update prices", "bad"); }
+}
+
+/* ---- alerts ---- */
+function checkAlerts() {
+  for (const a of S.alerts) {
+    if (!a.active) continue;
+    const it = S.items.find(i => i.id === a.itemId); if (!it) continue;
+    const now = unitUSD(it);
+    const hit = a.dir === "above" ? now >= a.target : now <= a.target;
+    if (hit && (!a.fired || Date.now() - a.fired > 864e5)) {
+      a.fired = Date.now(); Store.saveAlert(a);
+      const msg = `${it.name} is ${a.dir === "above" ? "up to" : "down to"} ${money(now)} (target ${money(a.target)})`;
+      toast("🔔 " + msg);
+      if (!ENV.claude && S.settings.notify && "Notification" in window && Notification.permission === "granted") {
+        try { new Notification("PKmon price alert", { body: msg, icon: it.img || undefined, tag: a.id }); } catch { /* some browsers need SW */ }
+      }
+    }
+  }
+}
+
+/* ---- file save (artifact downloads capability, else blob link) ---- */
+async function saveFile(filename, data, mime) {
+  if (ENV.cap.downloads) {
+    try { await ENV.cap.downloads.save({ filename, data }); toast("Saved " + filename); return; }
+    catch (e) { if (e && e.code === "declined") return; toast("Could not save: " + (e && e.message || "unknown"), "bad"); return; }
+  }
+  if (ENV.claude) { toast("Downloads aren't available in this view.", "bad"); return; }
+  const blob = data instanceof Blob ? data : new Blob([data], { type: mime || "application/octet-stream" });
+  const a = h("a", { href: URL.createObjectURL(blob), download: filename });
+  document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+  toast("Downloaded " + filename);
+}
+
+/* ---- toast ---- */
+function toast(msg, kind = "") {
+  const t = h("div", { class: "toast glass " + kind, role: "status" }, msg);
+  $("#toasts").append(t);
+  setTimeout(() => { t.style.transition = "opacity .3s"; t.style.opacity = "0"; setTimeout(() => t.remove(), 320); }, kind === "bad" ? 5200 : 3200);
+}
+function beep() {
+  if (!S.settings.sound) return;
+  try {
+    const ac = beep.ac || (beep.ac = new (window.AudioContext || window.webkitAudioContext)());
+    const o = ac.createOscillator(), g = ac.createGain();
+    o.type = "triangle"; o.frequency.setValueAtTime(880, ac.currentTime); o.frequency.exponentialRampToValueAtTime(1320, ac.currentTime + .08);
+    g.gain.setValueAtTime(.08, ac.currentTime); g.gain.exponentialRampToValueAtTime(.0001, ac.currentTime + .18);
+    o.connect(g).connect(ac.destination); o.start(); o.stop(ac.currentTime + .2);
+  } catch { /* audio blocked */ }
+  if (navigator.vibrate) navigator.vibrate(30);
+}
+</script>
+<script>
+"use strict";
+/* ============ Grader: measured from pixels ============
+   Input: ImageData of the card region (guide box + small margin).
+   Centering = border widths found from luminance-gradient profiles (pure geometry).
+   Corners / edges = whitening + straightness against the card's own border colour.
+   Surface = specular glare + fine-line anomalies inside the art box, normalised by sharpness. */
+const Grader = {
+  W: 252, H: 352, // working resolution, 63:88
+  analyze(img) {
+    const { W, H } = this, d = img.data;
+    const L = new Float32Array(W * H), Sat = new Float32Array(W * H);
+    for (let i = 0, p = 0; i < W * H; i++, p += 4) {
+      const r = d[p], g = d[p + 1], b = d[p + 2];
+      const mx = Math.max(r, g, b), mn = Math.min(r, g, b);
+      L[i] = .299 * r + .587 * g + .114 * b; Sat[i] = mx ? (mx - mn) / mx : 0;
+    }
+    const gx = (x, y) => Math.abs(L[y * W + Math.min(W - 1, x + 1)] - L[y * W + Math.max(0, x - 1)]);
+    const gy = (x, y) => Math.abs(L[Math.min(H - 1, y + 1) * W + x] - L[Math.max(0, y - 1) * W + x]);
+    const colP = new Float32Array(W), rowP = new Float32Array(H);
+    for (let x = 1; x < W - 1; x++) { let s = 0; for (let y = (H * .22) | 0; y < H * .78; y += 2) s += gx(x, y); colP[x] = s; }
+    for (let y = 1; y < H - 1; y++) { let s = 0; for (let x = (W * .22) | 0; x < W * .78; x += 2) s += gy(x, y); rowP[y] = s; }
+    const argmax = (P, a, b) => { let bi = a, bv = -1; for (let i = Math.max(1, a | 0); i < Math.min(P.length - 1, b | 0); i++) if (P[i] > bv) { bv = P[i]; bi = i; } return [bi, bv]; };
+    const firstPeak = (P, a, b, dir, frac = .45) => {
+      const [, mv] = argmax(P, Math.min(a, b), Math.max(a, b)); const thr = mv * frac;
+      if (dir > 0) { for (let i = a | 0; i < b; i++) if (P[i] >= thr && P[i] >= P[i - 1] && P[i] >= P[i + 1]) return [i, P[i]]; }
+      else { for (let i = a | 0; i > b; i--) if (P[i] >= thr && P[i] >= P[i - 1] && P[i] >= P[i + 1]) return [i, P[i]]; }
+      return argmax(P, Math.min(a, b), Math.max(a, b));
+    };
+    // outer card edges (card vs background) near the guide edges
+    const [oL, vL] = argmax(colP, 1, W * .14), [oR, vR] = argmax(colP, W * .86, W - 1);
+    const [oT, vT] = argmax(rowP, 1, H * .12), [oB, vB] = argmax(rowP, H * .88, H - 1);
+    const cw = oR - oL, ch = oB - oT;
+    // inner frame: first strong transition inward from each outer edge
+    const [iL] = firstPeak(colP, oL + cw * .025, oL + cw * .16, 1);
+    const [iR] = firstPeak(colP, oR - cw * .025, oR - cw * .16, -1);
+    const [iT] = firstPeak(rowP, oT + ch * .02, oT + ch * .13, 1);
+    const [iB] = firstPeak(rowP, oB - ch * .02, oB - ch * .13, -1);
+    const bl = Math.max(1, iL - oL), br = Math.max(1, oR - iR), bt = Math.max(1, iT - oT), bb = Math.max(1, oB - iB);
+    const lr = bl / (bl + br), tb = bt / (bt + bb);
+    const worst = Math.max(lr, 1 - lr, tb, 1 - tb);              // 0.5 = perfect
+    // PSA front tolerance: 55/45 → 10, 60/40 → 9, 65/35 → 8, 70/30 → 7 ...
+    const centering = clamp(worst <= .55 ? 10 : 10 - (worst - .55) / .05, 1, 10);
+
+    // border reference colour: median-ish from mid-edge border strips
+    const samp = [];
+    const pushPx = (x, y) => { x |= 0; y |= 0; if (x < 0 || y < 0 || x >= W || y >= H) return; const p = (y * W + x) * 4; samp.push([d[p], d[p + 1], d[p + 2]]); };
+    for (let y = oT + ch * .3; y < oT + ch * .7; y += 4) { pushPx(oL + bl * .5, y); pushPx(oR - br * .5, y); }
+    for (let x = oL + cw * .3; x < oL + cw * .7; x += 4) { pushPx(x, oT + bt * .5); pushPx(x, oB - bb * .5); }
+    const med = k => { const a = samp.map(s => s[k]).sort((x, y) => x - y); return a[a.length >> 1] || 128; };
+    const ref = [med(0), med(1), med(2)];
+    const refL = .299 * ref[0] + .587 * ref[1] + .114 * ref[2];
+    const isWhiten = (x, y) => { x |= 0; y |= 0; const i = y * W + x; return L[i] > Math.max(200, refL + 38) && Sat[i] < .16; };
+    const off = (x, y) => { x |= 0; y |= 0; const p = (y * W + x) * 4; return Math.hypot(d[p] - ref[0], d[p + 1] - ref[1], d[p + 2] - ref[2]) / 441; };
+
+    // corners: band just inside each corner arc
+    const cs = Math.max(6, cw * .07), corners = [];
+    for (const [cx, cy, sx, sy] of [[oL, oT, 1, 1], [oR, oT, -1, 1], [oL, oB, 1, -1], [oR, oB, -1, -1]]) {
+      let n = 0, w = 0, dev = 0;
+      for (let a = 1; a < cs; a++) for (let b = 1; b < cs; b++) {
+        const r = Math.hypot(a, b); if (r < cs * .35 || r > cs * .95) continue;
+        const x = cx + sx * a, y = cy + sy * b; n++; if (isWhiten(x, y)) w++; dev += off(x, y);
+      }
+      corners.push(clamp(10 - (w / Math.max(1, n)) * 55 - Math.max(0, dev / Math.max(1, n) - .18) * 12, 1, 10));
+    }
+    // edges: whitening along a thin inner strip + straightness of the outer edge line
+    const edgeScore = (pts, line) => {
+      let n = 0, w = 0; for (const [x, y] of pts) { n++; if (isWhiten(x, y)) w++; }
+      const m = line.reduce((a, b) => a + b, 0) / line.length;
+      const sd = Math.sqrt(line.reduce((a, b) => a + (b - m) ** 2, 0) / line.length);
+      return clamp(10 - (w / Math.max(1, n)) * 60 - Math.max(0, sd - 1.2) * 1.4, 1, 10);
+    };
+    const strip = (fn, len) => { const a = []; for (let t = .12; t < .88; t += 1 / len) a.push(fn(t)); return a; };
+    const localEdgeX = (y, x0, x1) => { let bi = x0, bv = -1; for (let x = Math.max(1, x0 | 0); x < Math.min(W - 1, x1 | 0); x++) { const v = gx(x, y | 0); if (v > bv) { bv = v; bi = x; } } return bi; };
+    const localEdgeY = (x, y0, y1) => { let bi = y0, bv = -1; for (let y = Math.max(1, y0 | 0); y < Math.min(H - 1, y1 | 0); y++) { const v = gy(x | 0, y); if (v > bv) { bv = v; bi = y; } } return bi; };
+    const edges = [
+      edgeScore(strip(t => [oL + 2, oT + ch * t], 60), strip(t => localEdgeX(oT + ch * t, oL - 4, oL + 4), 30)),
+      edgeScore(strip(t => [oR - 2, oT + ch * t], 60), strip(t => localEdgeX(oT + ch * t, oR - 4, oR + 4), 30)),
+      edgeScore(strip(t => [oL + cw * t, oT + 2], 60), strip(t => localEdgeY(oL + cw * t, oT - 4, oT + 4), 30)),
+      edgeScore(strip(t => [oL + cw * t, oB - 2], 60), strip(t => localEdgeY(oL + cw * t, oB - 4, oB + 4), 30))
+    ];
+    // surface + sharpness + glare (foil cue) in the art region
+    let lapV = 0, lapM = 0, n = 0, glare = 0, lines = 0, sparkleArt = 0, sparkleOut = 0, nOut = 0;
+    const ax0 = iL + cw * .06, ax1 = iR - cw * .06, ay0 = iT + ch * .06, ay1 = oT + ch * .52;
+    for (let y = ay0 | 0; y < ay1; y += 2) for (let x = ax0 | 0; x < ax1; x += 2) {
+      const i = y * W + x;
+      const lap = 4 * L[i] - L[i - 1] - L[i + 1] - L[i - W] - L[i + W];
+      lapM += lap; lapV += lap * lap; n++;
+      if (L[i] > 240 && Sat[i] < .2) glare++;
+      if (Math.abs(lap) > 70 && Math.abs(L[i - 2] - L[i + 2]) < 10 && Math.abs(L[i - 2 * W] - L[i + 2 * W]) > 25) lines++;
+      if (L[i] > 215) sparkleArt++;
+    }
+    for (let y = (oT + ch * .58) | 0; y < oB - ch * .1; y += 3) for (let x = (iL + 2) | 0; x < iR - 2; x += 3) { nOut++; if (L[y * W + x] > 228 && Sat[y * W + x] > .12) sparkleOut++; }
+    lapM /= Math.max(1, n); const sharp = Math.sqrt(Math.max(0, lapV / Math.max(1, n) - lapM * lapM));
+    const glareF = glare / Math.max(1, n), lineF = lines / Math.max(1, n);
+    const surface = clamp(10 - lineF * 260 - Math.max(0, glareF - .04) * 18, 1, 10);
+    const cornersAvg = corners.reduce((a, b) => a + b, 0) / 4, edgesAvg = edges.reduce((a, b) => a + b, 0) / 4;
+    const parts = [centering, cornersAvg, edgesAvg, surface];
+    const avg = (centering * .25 + cornersAvg * .25 + edgesAvg * .25 + surface * .25);
+    let overall = Math.min(avg, Math.min(...parts) + 1.5);
+    overall = Math.round(overall * 2) / 2;
+    const conf = clamp(Math.min(vL, vR, vT, vB) / Math.max(1, Math.max(vL, vR, vT, vB)), 0, 1) * clamp(sharp / 14, 0, 1);
+    return {
+      centering, corners: cornersAvg, edges: edgesAvg, surface, overall, conf, sharp,
+      lr: Math.round(lr * 100), tb: Math.round(tb * 100), cornerList: corners, edgeList: edges,
+      box: { oL, oR, oT, oB, iL, iR, iT, iB }, glare: glareF,
+      sparkle: { art: sparkleArt / Math.max(1, n), out: sparkleOut / Math.max(1, nOut) }
+    };
+  },
+  label(g) { return g >= 9.75 ? "Gem Mint 10" : g >= 9 ? "Mint 9" : g >= 8 ? "NM-MT 8" : g >= 7 ? "NM 7" : g >= 6 ? "EX-MT 6" : g >= 5 ? "EX 5" : g >= 4 ? "VG-EX 4" : "Played"; },
+  condition(g) { return g >= 8.5 ? "NM" : g >= 7 ? "LP" : g >= 5 ? "MP" : g >= 3 ? "HP" : "DMG"; }
+};
+/* Foil tracker: holo shimmer = brightness of sparkle pixels changing between frames as the card moves */
+const Foil = {
+  art: [], out: [],
+  push(sp) { this.art.push(sp.art); this.out.push(sp.out); if (this.art.length > 14) { this.art.shift(); this.out.shift(); } },
+  reset() { this.art = []; this.out = []; },
+  sd(a) { if (a.length < 4) return 0; const m = a.reduce((x, y) => x + y, 0) / a.length; return Math.sqrt(a.reduce((x, y) => x + (y - m) ** 2, 0) / a.length); },
+  guess() {
+    const a = this.sd(this.art), o = this.sd(this.out);
+    if (o > .012 && o > a * .8) return { kind: "reverse", p: clamp(o * 40, 0, 1) };
+    if (a > .015) return { kind: "holo", p: clamp(a * 30, 0, 1) };
+    return { kind: "normal", p: clamp(1 - Math.max(a, o) * 40, 0, 1) };
+  }
+};
+
+/* ============ Scanner ============ */
+const Scan = {
+  stream: null, video: null, canvas: null, work: null, raf: 0, last: null, lastFrame: null, stableSince: 0,
+  busy: false, lastAddedId: null, lastAddedAt: 0, ocr: null, ocrLoading: null, result: null, grade: null,
+  guide(cw, chh) { // guide rect in canvas coords, 63:88
+    const hgt = Math.min(chh * .82, cw * .78 * 88 / 63), wid = hgt * 63 / 88;
+    return { x: (cw - wid) / 2, y: (chh - hgt) / 2, w: wid, h: hgt };
+  },
+  async start() {
+    if (!ENV.camera || ENV.claude) { $("#fileIn").click(); return; }
+    try {
+      this.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false });
+    } catch (e) {
+      toast(e.name === "NotAllowedError" ? "Camera blocked. Allow camera access in your browser's site settings, or upload photos instead." : "No camera found. Upload photos instead.", "bad");
+      return;
+    }
+    this.video = $("#vid"); this.video.srcObject = this.stream; await this.video.play().catch(() => {});
+    $("#stageIdle").hidden = true; $("#stageStill").hidden = true;
+    this.canvas = $("#overlay"); this.work = document.createElement("canvas");
+    this.work.width = Grader.W + 24; this.work.height = Grader.H + 24;
+    Foil.reset(); this.loop(); renderScanCtrls();
+    try { await navigator.wakeLock?.request("screen"); } catch { /* optional */ }
+    if (ENV.online) this.loadOCR();
+  },
+  stop() {
+    cancelAnimationFrame(this.raf); this.raf = 0;
+    if (this.stream) this.stream.getTracks().forEach(t => t.stop());
+    this.stream = null; if ($("#stageIdle")) $("#stageIdle").hidden = false; renderScanCtrls();
+  },
+  frameTick: 0,
+  loop() {
+    this.raf = requestAnimationFrame(() => this.loop());
+    const v = this.video, c = this.canvas; if (!v || !v.videoWidth || !c) return;
+    const r = c.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
+    if (c.width !== (r.width * dpr | 0)) { c.width = r.width * dpr; c.height = r.height * dpr; }
+    const ctx = c.getContext("2d"); ctx.clearRect(0, 0, c.width, c.height);
+    const g = this.guide(c.width, c.height);
+    if (++this.frameTick % 6 === 0) this.measure(g, c);
+    drawOverlay(ctx, g, this.grade, dpr);
+  },
+  /* map overlay guide → video pixels (video is object-fit:cover) */
+  videoCrop(g, c) {
+    const v = this.video, vw = v.videoWidth, vh = v.videoHeight;
+    const s = Math.max(c.width / vw, c.height / vh), ox = (c.width - vw * s) / 2, oy = (c.height - vh * s) / 2;
+    const pad = .045;
+    return { sx: (g.x - g.w * pad - ox) / s, sy: (g.y - g.h * pad - oy) / s, sw: g.w * (1 + 2 * pad) / s, sh: g.h * (1 + 2 * pad) / s };
+  },
+  measure(g, c) {
+    const k = this.videoCrop(g, c), wc = this.work, wx = wc.getContext("2d", { willReadFrequently: true });
+    wx.drawImage(this.video, k.sx, k.sy, k.sw, k.sh, 0, 0, Grader.W, Grader.H);
+    const img = wx.getImageData(0, 0, Grader.W, Grader.H);
+    const gr = Grader.analyze(img); Foil.push(gr.sparkle);
+    // smooth for display
+    this.grade = this.grade ? Object.fromEntries(Object.entries(gr).map(([key, val]) => [key, typeof val === "number" && typeof this.grade[key] === "number" ? this.grade[key] * .6 + val * .4 : val])) : gr;
+    updateMeters(this.grade);
+    // stability for auto-capture
+    const small = new Uint8Array(64); for (let i = 0; i < 64; i++) { const x = (i % 8) * 31 + 16, y = ((i / 8) | 0) * 43 + 20; small[i] = img.data[(y * Grader.W + x) * 4]; }
+    let diff = 0; if (this.lastFrame) for (let i = 0; i < 64; i++) diff += Math.abs(small[i] - this.lastFrame[i]);
+    this.lastFrame = small;
+    const stable = this.lastFrame && diff / 64 < 7 && gr.conf > .35;
+    const now = performance.now();
+    if (!stable) this.stableSince = now;
+    if (S.settings.stack && stable && now - this.stableSince > 900 && !this.busy && now - this.lastAddedAt > 2500) this.capture(true);
+  },
+  async capture(auto = false) {
+    if (this.busy || !this.video) return;
+    this.busy = true; renderScanCtrls();
+    const c = this.canvas, g = this.guide(c.width, c.height), k = this.videoCrop(g, c);
+    const shot = document.createElement("canvas"); shot.width = 630; shot.height = 880;
+    shot.getContext("2d").drawImage(this.video, k.sx + k.sw * .043, k.sy + k.sh * .043, k.sw * .914, k.sh * .914, 0, 0, 630, 880);
+    $("#flash").classList.remove("go"); void $("#flash").offsetWidth; $("#flash").classList.add("go");
+    try { await this.identify(shot, { ...this.grade }, Foil.guess(), auto); }
+    finally { this.busy = false; renderScanCtrls(); this.stableSince = performance.now(); }
+  },
+  /* photos (artifact mode, or uploads on the web) */
+  async fromFiles(files) {
+    const list = [...files].slice(0, 30); if (!list.length) return;
+    toast(`Scanning ${list.length} photo${list.length > 1 ? "s" : ""}…`);
+    for (const f of list) {
+      const bmp = await createImageBitmap(f).catch(() => null); if (!bmp) continue;
+      // fit the card: assume it fills most of the photo; centre-crop to 63:88 with a margin
+      const ar = 63 / 88; let sw = bmp.width, sh = bmp.height;
+      if (sw / sh > ar) sw = sh * ar; else sh = sw / ar;
+      const sx = (bmp.width - sw) / 2, sy = (bmp.height - sh) / 2;
+      const wc = document.createElement("canvas"); wc.width = Grader.W; wc.height = Grader.H;
+      wc.getContext("2d").drawImage(bmp, sx, sy, sw, sh, 0, 0, Grader.W, Grader.H);
+      const gr = Grader.analyze(wc.getContext("2d").getImageData(0, 0, Grader.W, Grader.H));
+      const shot = document.createElement("canvas"); shot.width = 630; shot.height = 880;
+      shot.getContext("2d").drawImage(bmp, sx, sy, sw, sh, 0, 0, 630, 880);
+      const still = $("#stageStill"); still.src = shot.toDataURL("image/jpeg", .85); still.hidden = false; $("#stageIdle").hidden = true;
+      this.grade = gr; updateMeters(gr);
+      const ov = $("#overlay"); const r = ov.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
+      ov.width = r.width * dpr; ov.height = r.height * dpr; const ctx = ov.getContext("2d"); ctx.clearRect(0, 0, ov.width, ov.height);
+      drawOverlay(ctx, this.guide(ov.width, ov.height), gr, dpr);
+      await this.identify(shot, gr, { kind: "unknown", p: 0 }, list.length > 1, f);
+    }
+  },
+  async loadOCR() {
+    if (this.ocr || this.ocrLoading) return this.ocrLoading;
+    this.ocrLoading = (async () => {
+      await new Promise((res, rej) => { const s = h("script", { src: "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" }); s.onload = res; s.onerror = rej; document.head.append(s); });
+      this.ocr = await Tesseract.createWorker("eng");
+      return this.ocr;
+    })().catch(e => { console.warn("OCR", e); this.ocrLoading = null; return null; });
+    return this.ocrLoading;
+  },
+  async ocrRead(shot) {
+    const w = await this.loadOCR(); if (!w) return {};
+    const crop = (x, y, ww, hh, scale = 2.2) => { const c = document.createElement("canvas"); c.width = ww * scale; c.height = hh * scale; const k = c.getContext("2d"); k.filter = "grayscale(1) contrast(1.6)"; k.drawImage(shot, x, y, ww, hh, 0, 0, c.width, c.height); return c; };
+    const nameR = await w.recognize(crop(40, 22, 430, 70));
+    const botR = await w.recognize(crop(0, 790, 630, 90));
+    const name = (nameR.data.text || "").replace(/[^A-Za-zÀ-ÿ'’.\- ]/g, " ").replace(/\b(BASIC|STAGE\s?\d|HP)\b/gi, " ").replace(/\s+/g, " ").trim().split(" ").filter(x => x.length > 1).slice(0, 3).join(" ");
+    const m = (botR.data.text || "").replace(/[Oo]/g, "0").match(/(\d{1,3})\s*\/\s*(\d{2,3})/);
+    return { name, number: m ? String(+m[1]) : null, total: m ? +m[2] : null, raw: (nameR.data.text + " | " + botR.data.text).trim() };
+  },
+  async identify(shot, gr, foil, auto, file) {
+    const thumb = (() => { const t = document.createElement("canvas"); t.width = 126; t.height = 176; t.getContext("2d").drawImage(shot, 0, 0, 126, 176); return t.toDataURL("image/jpeg", .72); })();
+    const cond = { corners: +gr.corners.toFixed(1), edges: +gr.edges.toFixed(1), surface: +gr.surface.toFixed(1), centering: +gr.centering.toFixed(1), overall: gr.overall, lr: Math.round(gr.lr), tb: Math.round(gr.tb), by: "pixels" };
+    setResult({ state: "working", thumb, cond });
+    let found = null, candidates = [], ai = null, note = "";
+    try {
+      if (ENV.cap.sample && ENV.aiImages) {
+        ai = await claudeIdentify(shot, file, foil);
+        if (ai && ENV.online && ai.name) {
+          const q = `name:"${ai.name.replace(/"/g, "")}"` + (ai.number ? ` number:${String(ai.number).replace(/\D.*$/, "")}` : "");
+          candidates = await searchCards(q, 12).catch(() => []);
+        }
+      } else if (ENV.online) {
+        const o = await this.ocrRead(shot);
+        note = o.raw ? "Read: " + o.raw.slice(0, 60) : "";
+        if (o.number && o.total) candidates = await searchCards(`number:${o.number} set.printedTotal:${o.total}`, 24).catch(() => []);
+        if (o.name && candidates.length > 1) { const nm = o.name.toLowerCase().split(" ")[0]; const f = candidates.filter(c => c.name.toLowerCase().includes(nm)); if (f.length) candidates = f; }
+        if (!candidates.length && o.name) candidates = await searchCards(`name:"${o.name.split(" ")[0]}*"`, 12).catch(() => []);
+      }
+      found = candidates[0] || null;
+    } catch (e) { note = e.message || String(e); }
+    let item = null;
+    if (found) item = itemFromCard(found, { cond, thumb, foilGuess: ai ? ai.foil : foil.kind });
+    else if (ai && ai.name) item = itemFromAI(ai, cond, thumb);
+    if (item && ai) { item.ai = { variantNote: ai.variantNote, gradeNote: ai.gradeNote, estGrade: ai.estGrade }; if (ai.estUSD && !item.prices?.tcg) item.aiEstUSD = ai.estUSD; }
+    if (item) item.cond.foil = foil.kind !== "unknown" ? foil.kind : (ai && ai.foil) || null;
+    setResult({ state: item ? "found" : "miss", item, candidates: candidates.slice(1, 6), thumb, cond, note });
+    if (item && (auto || S.settings.stack)) {
+      if (this.lastAddedId === (item.cardId || item.name) && Date.now() - this.lastAddedAt < 6000) return;
+      addItem(item, { quiet: true }); S.stackSession.unshift(item); this.lastAddedId = item.cardId || item.name; this.lastAddedAt = Date.now();
+      beep(); renderTray();
+    }
+  }
+};
+
+/* Claude vision (artifact viewer): identify + variant + grading read, strict JSON */
+async function claudeIdentify(shot, file, foil) {
+  const blob = file && file.size < 15e6 ? file : await new Promise(r => shot.toBlob(r, "image/jpeg", .9));
+  const prompt = `You are a Pokémon TCG expert grader. The image is a photo of one Pokémon trading card (front).
+Identify it and assess condition. Reply with ONLY this JSON (no prose):
+{"name":"card name exactly as printed","number":"collector number before the slash","setTotal":printed set total as number or null,"setName":"set name","setCode":"set code e.g. SV3pt5 or null","rarity":"rarity as printed/official","foil":"normal|holo|reverse","altArt":true|false,"secretRare":true|false,"variantNote":"short note on variant (e.g. Special Illustration Rare, reverse holo pattern)","estGrade":"PSA-style estimate like 9 or 8.5","gradeNote":"one sentence on corners, edges, surface, centering","estUSD":approx current raw near-mint market price in USD as a number from your knowledge, or null,"confidence":0-1}
+A local pixel measurement already found: centering ${Scan.grade ? Math.round(Scan.grade.lr) + "/" + (100 - Math.round(Scan.grade.lr)) + " L/R" : "unknown"}. If the image is not a Pokémon card, set name to null.`;
+  try {
+    const out = await ENV.cap.sample.json(prompt, { images: [blob], modelTier: "default" });
+    if (!out || !out.name) { toast("Claude couldn't recognise a card in that photo.", "bad"); return null; }
+    return out;
+  } catch (e) {
+    if (e && e.code === "not_granted") toast("Allow Claude to look at images to identify cards.", "bad");
+    else if (e && e.code === "rate_limited") toast("Too many scans in a row. Wait a moment.", "bad");
+    else toast("Card ID failed: " + (e && e.message || "unknown"), "bad");
+    return null;
+  }
+}
+function itemFromAI(ai, cond, thumb) {
+  const tags = []; if (ai.secretRare) tags.push("secret"); if (ai.altArt) tags.push("alt");
+  return {
+    id: uid(), kind: "card", cardId: null, name: ai.name, number: ai.number ? String(ai.number) : "", rarity: ai.rarity || "",
+    setId: ai.setCode ? String(ai.setCode).toLowerCase() : (ai.setName || "").toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+    setName: ai.setName || "Unknown set", series: "", printedTotal: ai.setTotal || null, setTotal: ai.setTotal || null, setCode: ai.setCode || "",
+    img: null, imgL: null, variant: ai.foil === "reverse" ? "reverseHolofoil" : ai.foil === "holo" ? "holofoil" : "normal",
+    tags, qty: 1, paid: 0, cond, grade: { co: "RAW", g: null },
+    prices: { tcg: null, cm: null, t: Date.now(), src: "ai" }, aiEstUSD: typeof ai.estUSD === "number" ? ai.estUSD : null,
+    thumb, added: Date.now(), notes: ""
+  };
+}
+
+/* overlay drawing: guide, measured borders, 3×3 grading grid, corner ticks */
+function drawOverlay(ctx, g, gr, dpr) {
+  const t = performance.now() / 1000;
+  ctx.save();
+  ctx.fillStyle = "rgba(4,6,16,.42)";
+  ctx.beginPath(); ctx.rect(0, 0, ctx.canvas.width, ctx.canvas.height); ctx.roundRect(g.x, g.y, g.w, g.h, 14 * dpr); ctx.fill("evenodd");
+  const grad = ctx.createLinearGradient(g.x, g.y, g.x + g.w, g.y + g.h);
+  grad.addColorStop(0, "#FF6B9F"); grad.addColorStop(.5 + .3 * Math.sin(t), "#FFD23F"); grad.addColorStop(1, "#4FB3FF");
+  ctx.strokeStyle = grad; ctx.lineWidth = 3 * dpr; ctx.beginPath(); ctx.roundRect(g.x, g.y, g.w, g.h, 14 * dpr); ctx.stroke();
+  // grid
+  ctx.strokeStyle = "rgba(255,255,255,.22)"; ctx.lineWidth = 1 * dpr; ctx.setLineDash([4 * dpr, 6 * dpr]);
+  for (let i = 1; i < 3; i++) { ctx.beginPath(); ctx.moveTo(g.x + g.w * i / 3, g.y); ctx.lineTo(g.x + g.w * i / 3, g.y + g.h); ctx.moveTo(g.x, g.y + g.h * i / 3); ctx.lineTo(g.x + g.w, g.y + g.h * i / 3); ctx.stroke(); }
+  ctx.setLineDash([]);
+  // scan line
+  const sy = g.y + (g.h * ((t * .45) % 1));
+  const sl = ctx.createLinearGradient(0, sy - 30 * dpr, 0, sy); sl.addColorStop(0, "rgba(79,179,255,0)"); sl.addColorStop(1, "rgba(79,179,255,.35)");
+  ctx.fillStyle = sl; ctx.fillRect(g.x, sy - 30 * dpr, g.w, 30 * dpr);
+  if (gr && gr.box) {
+    // map grader box (working res with 4.5% pad) to overlay
+    const pad = .045, fw = g.w * (1 + 2 * pad), fh = g.h * (1 + 2 * pad), fx = g.x - g.w * pad, fy = g.y - g.h * pad;
+    const X = x => fx + x / Grader.W * fw, Y = y => fy + y / Grader.H * fh, b = gr.box;
+    ctx.strokeStyle = "rgba(62,224,143,.95)"; ctx.lineWidth = 1.5 * dpr;
+    ctx.strokeRect(X(b.iL), Y(b.iT), X(b.iR) - X(b.iL), Y(b.iB) - Y(b.iT));
+    ctx.strokeStyle = "rgba(255,210,63,.9)"; ctx.strokeRect(X(b.oL), Y(b.oT), X(b.oR) - X(b.oL), Y(b.oB) - Y(b.oT));
+    // corner scores
+    ctx.font = `700 ${11 * dpr}px "JetBrains Mono",monospace`; ctx.textBaseline = "middle";
+    const cl = gr.cornerList || [];
+    [[X(b.oL), Y(b.oT), "left"], [X(b.oR), Y(b.oT), "right"], [X(b.oL), Y(b.oB), "left"], [X(b.oR), Y(b.oB), "right"]].forEach(([x, y, al], i) => {
+      const v = cl[i]; if (v == null) return;
+      ctx.fillStyle = v >= 9 ? "#3EE08F" : v >= 7 ? "#FFD23F" : "#FF6B6B";
+      ctx.beginPath(); ctx.arc(x, y, 5 * dpr, 0, 7); ctx.fill();
+      ctx.textAlign = al === "left" ? "left" : "right";
+      ctx.fillStyle = "#fff"; ctx.fillText(v.toFixed(1), x + (al === "left" ? 9 : -9) * dpr, y + (i < 2 ? -10 : 10) * dpr);
+    });
+    // centering readout
+    ctx.textAlign = "center"; ctx.fillStyle = "rgba(255,255,255,.92)";
+    ctx.fillText(`L/R ${Math.round(gr.lr)}/${100 - Math.round(gr.lr)}`, g.x + g.w / 2, Y(b.oT) + 14 * dpr);
+    ctx.fillText(`T/B ${Math.round(gr.tb)}/${100 - Math.round(gr.tb)}`, g.x + g.w / 2, Y(b.oB) - 14 * dpr);
+  }
+  ctx.restore();
+}
+function updateMeters(gr) {
+  for (const k of ["corners", "edges", "surface", "centering"]) {
+    const el = $("#m-" + k); if (!el) continue;
+    el.querySelector(".v").textContent = gr[k].toFixed(1);
+    el.querySelector("i").style.width = (gr[k] * 10) + "%";
+  }
+  const gb = $("#hudGrade"); if (gb) gb.textContent = `Est. ${Grader.label(gr.overall)} · ${Math.round(gr.conf * 100)}% sure`;
+  const fl = $("#hudFoil"); if (fl) { const f = Foil.guess(); fl.textContent = f.kind === "holo" ? "✦ Holo foil" : f.kind === "reverse" ? "✦ Reverse holo" : "Non-foil"; }
+}
+</script>
+<script>
+"use strict";
+/* ============ Views ============ */
+const ICON = {
+  sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+  moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
+  auto: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>',
+  cam: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>',
+  img: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg>',
+  dl: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>',
+  share: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="m8.6 13.5 6.8 4M15.4 6.5l-6.8 4"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
+  refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.5 9a9 9 0 0 1 14.9-3.4L23 10M1 14l4.6 4.4A9 9 0 0 0 20.5 15"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>'
+};
+const ph = it => h("div", { class: "ph" }, (it.name || "?").slice(0, 2));
+const cardImg = (it, big) => {
+  const src = (!ENV.claude && (big ? it.imgL || it.img : it.img)) || it.thumb;
+  if (!src) return ph(it);
+  const im = h("img", { src, alt: it.name, loading: "lazy" });
+  im.onerror = () => { if (it.thumb && im.src !== it.thumb) im.src = it.thumb; else im.replaceWith(ph(it)); };
+  return im;
+};
+function chipsFor(it) {
+  const out = [];
+  if (it.kind === "sealed") return [h("span", { class: "chip" }, it.ptype || "Sealed")];
+  if (/holo/i.test(it.variant)) out.push(h("span", { class: "chip foil" }, VARIANT_LABEL[it.variant] || it.variant));
+  if ((it.tags || []).includes("secret")) out.push(h("span", { class: "chip secret" }, "Secret rare"));
+  if ((it.tags || []).includes("alt")) out.push(h("span", { class: "chip alt" }, "Alt art"));
+  if (it.grade && it.grade.co && it.grade.co !== "RAW") out.push(h("span", { class: "chip" }, `${it.grade.co} ${it.grade.g}`));
+  else if (it.cond) out.push(h("span", { class: "chip" }, `${Grader.condition(it.cond.overall)} · ~${it.cond.overall}`));
+  return out;
+}
+
+function setView(v) {
+  if (S.view === "scan" && v !== "scan") Scan.stop();
+  S.view = v;
+  $$(".nav button").forEach(b => b.setAttribute("aria-current", b.dataset.v === v ? "page" : "false"));
+  render();
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+function render() {
+  const m = $("#main"); m.innerHTML = "";
+  const v = { scan: viewScan, port: viewPortfolio, trade: viewTrade, set: viewSettings }[S.view]();
+  m.append(v);
+}
+
+/* ---------- Scanner view ---------- */
+function viewScan() {
+  const web = !ENV.claude && ENV.camera;
+  const v = h("section", { class: "view" },
+    h("div", { class: "row between" },
+      h("div", {}, h("div", { class: "eyebrow" }, "Scanner"), h("h1", {}, "Scan, grade, price")),
+      h("label", { class: "row small", style: "gap:8px;font-weight:700" }, "Stack mode",
+        h("span", { class: "switch" }, h("input", { type: "checkbox", id: "stackSw", checked: S.settings.stack, onchange: e => { S.settings.stack = e.target.checked; Store.saveMeta(); toast(S.settings.stack ? "Stack mode on: cards add themselves as you scan" : "Stack mode off: confirm each card"); } }), h("span", {})))),
+    h("div", { class: "grid2" },
+      h("div", { class: "stack" },
+        h("div", { class: "stage glass" },
+          h("video", { id: "vid", playsinline: true, muted: true, autoplay: true }),
+          h("img", { id: "stageStill", class: "still", alt: "", hidden: true }),
+          h("canvas", { id: "overlay" }),
+          h("div", { class: "hud" }, h("span", { class: "chip", id: "hudGrade" }, "Est. —"), h("span", { class: "chip", id: "hudFoil" }, "Foil —")),
+          h("div", { class: "meters" }, ...["corners", "edges", "surface", "centering"].map(k => h("div", { class: "meter", id: "m-" + k }, h("div", { class: "k" }, k), h("div", { class: "v" }, "—"), h("div", { class: "bar" }, h("i", {}))))),
+          h("div", { class: "idle", id: "stageIdle" }, h("div", {},
+            h("h2", { style: "color:#fff" }, web ? "Point at a card" : "Snap or pick card photos"),
+            h("p", {}, web ? "Hold one card inside the frame. Keep it flat and steady; stack mode captures it, reads the name and number, then waits for the next card."
+              : "Take a photo of each card front, filling the frame. Pick several at once to scan a stack. Claude reads each card and the grader measures it."),
+            h("div", { class: "row", style: "justify-content:center" },
+              web ? h("button", { class: "btn primary", onclick: () => Scan.start(), html: ICON.cam + "Start camera" }) : null,
+              h("button", { class: web ? "btn" : "btn primary", onclick: () => $("#fileIn").click(), html: ICON.img + (web ? "Upload photos" : "Take or choose photos") })))),
+          h("div", { class: "flash", id: "flash" })),
+        h("div", { class: "scan-ctrls", id: "scanCtrls" })),
+      h("div", { class: "stack" },
+        h("div", { class: "glass panel", id: "resultBox" }),
+        h("div", { class: "glass panel stack" },
+          h("div", { class: "row between" }, h("h2", {}, "This scan session"), h("span", { class: "small muted num", id: "trayTotal" })),
+          h("div", { class: "tray", id: "tray" })),
+        h("div", { class: "glass panel stack" },
+          h("h2", {}, "Find a card by name"),
+          searchBox(card => { addItem(itemFromCard(card)); }))))
+  );
+  queueMicrotask(() => { renderScanCtrls(); setResult(S._lastResult || { state: "idle" }); renderTray(); });
+  return v;
+}
+function renderScanCtrls() {
+  const c = $("#scanCtrls"); if (!c) return; c.innerHTML = "";
+  if (Scan.stream) {
+    c.append(
+      h("button", { class: "btn primary", disabled: Scan.busy, onclick: () => Scan.capture(false), html: (Scan.busy ? '<span class="spin"></span>' : ICON.cam) + (Scan.busy ? "Reading card…" : "Capture now") }),
+      h("button", { class: "btn", onclick: () => Scan.stop() }, "Stop camera"),
+      h("button", { class: "btn ghost", onclick: () => $("#fileIn").click(), html: ICON.img + "Photos" }),
+      h("span", { class: "small muted" }, S.settings.stack ? "Auto-captures when the card is steady" : ""));
+  } else if (!$("#stageIdle")?.hidden) {
+    c.append(h("span", { class: "small muted" }, ENV.claude ? "Inside Claude the live camera isn't available, so card ID uses photos and Claude vision." : ENV.online ? "Card ID reads the name and collector number, then looks the card up live." : "Offline: card lookup is paused. Grading still works."));
+  } else {
+    c.append(h("button", { class: "btn primary", onclick: () => $("#fileIn").click(), html: ICON.img + "Scan more photos" }),
+      !ENV.claude && ENV.camera ? h("button", { class: "btn", onclick: () => Scan.start(), html: ICON.cam + "Live camera" }) : null);
+  }
+}
+function setResult(r) {
+  S._lastResult = r;
+  const box = $("#resultBox"); if (!box) return; box.innerHTML = "";
+  if (r.state === "idle") {
+    box.append(h("div", { class: "eyebrow" }, "Live condition grader"),
+      h("p", { class: "muted small", style: "margin:.4em 0 0" }, "Centering is measured from the border widths in the frame (PSA front tolerance is 55/45 for a 10). Corners, edges and surface come from whitening, edge straightness and fine-line checks on the pixels. It's a pre-grade guide, not a slab grade."));
+    return;
+  }
+  const c = r.cond;
+  const gb = h("div", { class: "gradebox" },
+    h("div", { class: "gradeball", style: `--p:${c.overall * 10}` }, h("span", {}, String(c.overall), h("small", {}, "EST. GRADE"))),
+    h("div", { class: "stack", style: "gap:7px" }, ...[["Corners", c.corners], ["Edges", c.edges], ["Surface", c.surface], ["Centering", c.centering]].map(([k, v]) =>
+      h("div", { class: "mrow" }, h("span", { class: "muted" }, k), h("span", { class: "bar" }, h("i", { style: `width:${v * 10}%` })), h("span", { class: "num", style: "text-align:right;font-weight:700" }, v.toFixed(1)))),
+      h("div", { class: "small muted num" }, `L/R ${c.lr}/${100 - c.lr} · T/B ${c.tb}/${100 - c.tb} · ${Grader.label(c.overall)}`)));
+  if (r.state === "working") { box.append(h("div", { class: "row", style: "margin-bottom:12px" }, h("span", { class: "spin" }), h("b", {}, ENV.cap.sample && ENV.aiImages ? "Claude is reading the card…" : "Reading name and number…")), gb); return; }
+  if (r.state === "miss") {
+    box.append(h("div", { class: "result" }, h("img", { class: "thumb", src: r.thumb, alt: "" }),
+      h("div", { class: "stack", style: "gap:6px" }, h("h2", {}, "Card not recognised"),
+        h("p", { class: "small muted", style: "margin:0" }, ENV.online || ENV.cap.sample ? "Try steadier light with less glare, or search by name below. " + (r.note || "") : "Card lookup needs an internet connection. Search by name once online."))),
+      h("div", { style: "margin-top:12px" }, gb));
+    return;
+  }
+  const it = r.item, inColl = S.items.some(x => x.id === it.id);
+  box.append(
+    h("div", { class: "result" },
+      h("div", { class: "holo", style: "width:96px" }, cardImg(it)),
+      h("div", { class: "stack", style: "gap:6px;min-width:0" },
+        h("div", { class: "eyebrow" }, `${it.setName || ""} · ${it.number || "?"}${it.printedTotal ? "/" + it.printedTotal : ""}`),
+        h("h2", {}, it.name),
+        h("div", { class: "row", style: "gap:6px" }, ...chipsFor(it), it.rarity ? h("span", { class: "chip" }, it.rarity) : null),
+        h("div", { class: "row", style: "gap:14px;margin-top:4px" },
+          h("div", {}, h("div", { class: "eyebrow" }, "Raw value"), h("div", { class: "num", style: "font-size:20px;font-weight:700" }, money(rawUSD(it))), it.prices.src === "ai" ? h("div", { class: "est" }, "AI estimate") : null),
+          h("div", {}, h("div", { class: "eyebrow" }, "If PSA 10"), h("div", { class: "num", style: "font-size:20px;font-weight:700" }, money(gradedUSD(rawUSD(it), "PSA", 10))), h("div", { class: "est" }, "Model estimate"))))),
+    it.ai && it.ai.gradeNote ? h("p", { class: "small muted", style: "margin:10px 0 0" }, "Claude: " + it.ai.gradeNote + (it.ai.estGrade ? ` (est. ${it.ai.estGrade})` : "")) : null,
+    h("div", { style: "margin-top:12px" }, gb),
+    h("div", { class: "row", style: "margin-top:12px" },
+      inColl ? h("span", { class: "chip good" }, "✓ Added to collection") : h("button", { class: "btn primary", onclick: () => { addItem(it); setResult({ ...r }); }, html: ICON.plus + "Add to collection" }),
+      h("button", { class: "btn", onclick: () => openDetail(it) }, "Prices & details")),
+    r.candidates && r.candidates.length ? h("div", { class: "stack", style: "margin-top:12px;gap:6px" }, h("div", { class: "eyebrow" }, "Not this one? Other matches"),
+      h("div", { class: "tray" }, ...r.candidates.map(cd => h("button", { class: "t", style: "border:0;background:none;cursor:pointer", onclick: () => { const ni = itemFromCard(cd, { cond: it.cond, thumb: it.thumb }); if (inColl) { removeItem(it.id, true); addItem(ni, { quiet: true }); } setResult({ ...r, item: ni, candidates: r.candidates.filter(x => x !== cd) }); } },
+        h("img", { src: cd.images.small, alt: cd.name }), `${cd.set.name} ${cd.number}`)))) : null
+  );
+}
+function renderTray() {
+  const t = $("#tray"); if (!t) return; t.innerHTML = "";
+  if (!S.stackSession.length) { t.append(h("div", { class: "small muted" }, "Cards you scan this session line up here.")); $("#trayTotal").textContent = ""; return; }
+  for (const it of S.stackSession) t.append(h("button", { class: "t", style: "border:0;background:none;cursor:pointer;color:inherit", onclick: () => openDetail(it) }, cardImg(it), h("div", { class: "num" }, money(unitUSD(it)))));
+  $("#trayTotal").textContent = `${S.stackSession.length} cards · ${money(S.stackSession.reduce((a, b) => a + unitUSD(b), 0))}`;
+}
+function searchBox(onPick, { placeholder = "e.g. Charizard ex 199" } = {}) {
+  const res = h("div", { class: "list" });
+  const inp = h("input", { class: "inp", type: "search", placeholder, id: "q" + Math.random().toString(36).slice(2, 6), "aria-label": "Card name" });
+  let timer, ctrl;
+  const run = async () => {
+    const q = inp.value.trim(); res.innerHTML = ""; if (q.length < 2) return;
+    if (!ENV.online) { res.append(h("div", { class: "small muted" }, ENV.claude ? "Live card search runs on the web version (link in Settings). Here, scan a photo and Claude identifies it." : "Search needs an internet connection.")); return; }
+    res.append(h("div", { class: "small muted" }, h("span", { class: "spin" }), " Searching…"));
+    const m = q.match(/^(.*?)\s+(\d{1,3})(?:\s*\/\s*(\d{1,3}))?$/);
+    const query = m ? `name:"${m[1].replace(/"/g, "")}*" number:${m[2]}` : `name:"${q.replace(/"/g, "")}*"`;
+    try {
+      const cards = await searchCards(query, 18); res.innerHTML = "";
+      if (!cards.length) res.append(h("div", { class: "small muted" }, "No cards match. Check spelling or drop the number."));
+      for (const c of cards) {
+        const t = c.tcgplayer && c.tcgplayer.prices, k = t && Object.keys(t)[0], mk = k && (t[k].market || t[k].mid);
+        res.append(h("div", { class: "item", tabindex: 0, onclick: () => onPick(c), onkeydown: e => e.key === "Enter" && onPick(c) },
+          h("img", { src: c.images.small, alt: "", loading: "lazy" }),
+          h("div", { style: "min-width:0" }, h("div", { class: "nm" }, c.name), h("div", { class: "meta" }, `${c.set.name} · ${c.number}/${c.set.printedTotal}`, c.rarity ? h("span", { class: "chip" }, c.rarity) : null)),
+          h("div", { class: "val" }, h("div", { class: "num" }, mk ? money(mk) : "—"), h("div", { class: "small muted" }, "Add +"))));
+      }
+    } catch (e) { res.innerHTML = ""; res.append(h("div", { class: "small", style: "color:var(--bad)" }, e.message)); }
+  };
+  inp.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(run, 380); });
+  return h("div", { class: "stack" }, h("div", { class: "row", style: "flex-wrap:nowrap" }, inp), res);
+}
+
+/* ---------- collection ops ---------- */
+function addItem(it, { quiet = false } = {}) {
+  const dup = it.kind === "card" && it.cardId && S.items.find(x => x.cardId === it.cardId && x.variant === it.variant && (!x.grade || x.grade.co === "RAW"));
+  if (dup && !quiet) { dup.qty = (dup.qty || 1) + 1; Store.saveItem(dup); toast(`${it.name}: now ×${dup.qty}`); }
+  else { S.items.unshift(it); Store.saveItem(it); if (!quiet) toast(`Added ${it.name}`); }
+  snapshotHistory();
+}
+function removeItem(id, silent) {
+  const it = S.items.find(x => x.id === id); S.items = S.items.filter(x => x.id !== id); Store.removeItem(id);
+  for (const a of S.alerts.filter(a => a.itemId === id)) { S.alerts = S.alerts.filter(x => x !== a); Store.removeAlert(a.id); }
+  snapshotHistory(); if (!silent && it) toast(`Removed ${it.name}`);
+}
+
+/* ---------- Portfolio ---------- */
+function viewPortfolio() {
+  const t = totals();
+  const v = h("section", { class: "view" },
+    h("div", { class: "row between" },
+      h("div", {}, h("div", { class: "eyebrow" }, "Portfolio"), h("h1", {}, "Your vault")),
+      h("div", { class: "row" },
+        ENV.online ? h("button", { class: "btn sm", onclick: async e => { e.currentTarget.disabled = true; await refreshPrices(); render(); }, html: ICON.refresh + "Update prices" }) : null,
+        h("button", { class: "btn sm", onclick: openExport, html: ICON.dl + "Export" }),
+        h("button", { class: "btn sm blue", onclick: shareBinder, html: ICON.share + "Share binder" }))),
+    h("div", { class: "kpis" },
+      kpi("Total value", money(t.v), `${t.cards} cards · ${t.sealed} sealed`),
+      kpi("Cost basis", money(t.c), "What you paid"),
+      kpi("All-time gain / loss", money(t.g, { sign: true }), t.c ? pct(t.gp) : "Add what you paid to track gains", t.c ? (t.g >= 0 ? "up" : "down") : ""),
+      kpi("Top holding", (() => { const top = [...S.items].sort((a, b) => unitUSD(b) * (b.qty || 1) - unitUSD(a) * (a.qty || 1))[0]; return top ? money(unitUSD(top) * (top.qty || 1)) : "—"; })(), (() => { const top = [...S.items].sort((a, b) => unitUSD(b) * (b.qty || 1) - unitUSD(a) * (a.qty || 1))[0]; return top ? top.name : "Nothing yet"; })())),
+    chartPanel(),
+    h("div", { class: "tabs glass flat", role: "tablist" }, ...[["cards", "Cards"], ["sealed", "Sealed"], ["sets", "Master sets"], ["alerts", "Price alerts"]].map(([k, l]) =>
+      h("button", { role: "tab", "aria-selected": S.ptab === k ? "true" : "false", onclick: () => { S.ptab = k; render(); } }, l))),
+    { cards: tabCards, sealed: tabSealed, sets: tabSets, alerts: tabAlerts }[S.ptab]()
+  );
+  return v;
+}
+function kpi(label, val, sub, cls = "") {
+  return h("div", { class: "glass kpi" }, h("div", { class: "eyebrow" }, label), h("div", { class: "v" }, val), h("div", { class: "d " + cls }, sub));
+}
+function chartPanel() {
+  S.range = S.range || "30d";
+  const wrap = h("div", { class: "glass panel stack" });
+  const draw = () => {
+    wrap.innerHTML = "";
+    const pts = trendSeries(S.range);
+    const first = pts[0], last = pts[pts.length - 1];
+    const ch = first && last && first.v ? (last.v - first.v) / first.v : null;
+    wrap.append(h("div", { class: "row between" },
+      h("div", {}, h("h2", {}, "Value trend"), h("div", { class: "small " + (ch >= 0 ? "up" : "down") }, ch == null ? "Builds as you add cards" : `${pct(ch)} over ${S.range === "30d" ? "30 days" : "1 year"}`)),
+      h("div", { class: "seg" }, ...[["30d", "30D"], ["1y", "1Y"]].map(([k, l]) => h("button", { "aria-pressed": S.range === k ? "true" : "false", onclick: () => { S.range = k; draw(); } }, l)))));
+    wrap.append(svgChart(pts));
+    wrap.append(h("div", { class: "small muted" }, "Solid points are your daily snapshots. Hollow points are rebuilt from Cardmarket's 30, 7 and 1-day averages for the cards you hold. The 1-year line fills in as you open the app over time."));
+  };
+  draw(); return wrap;
+}
+function svgChart(pts) {
+  const W = Math.round(clamp(innerWidth - 64, 340, 720)), H = W < 500 ? 200 : 220, L = 58, R = 14, T = 14, B = 26;
+  const NS = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(NS, "svg"); svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("class", "chart"); svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "Portfolio value over time");
+  if (pts.length < 2) {
+    svg.innerHTML = `<text x="${W / 2}" y="${H / 2}" text-anchor="middle" style="font-size:13px">Add cards to start your value history</text>`; return svg;
+  }
+  const t0 = pts[0].t, t1 = pts[pts.length - 1].t;
+  let v0 = Math.min(...pts.map(p => p.v)), v1 = Math.max(...pts.map(p => p.v));
+  if (v1 - v0 < 1e-6) { v0 *= .95; v1 = v1 * 1.05 + 1; }
+  const padv = (v1 - v0) * .12; v0 = Math.max(0, v0 - padv); v1 += padv;
+  const X = t => L + (t - t0) / Math.max(1, t1 - t0) * (W - L - R), Y = v => T + (1 - (v - v0) / (v1 - v0)) * (H - T - B);
+  const ticks = 4; let g = "";
+  for (let i = 0; i <= ticks; i++) { const v = v0 + (v1 - v0) * i / ticks, y = Y(v); g += `<line x1="${L}" x2="${W - R}" y1="${y}" y2="${y}" stroke="var(--edge)"/><text x="${L - 8}" y="${y + 3}" text-anchor="end">${esc(money(v, { compact: true }))}</text>`; }
+  const fmt = t => new Date(t).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  g += `<text x="${L}" y="${H - 6}">${fmt(t0)}</text><text x="${W - R}" y="${H - 6}" text-anchor="end">${fmt(t1)}</text>`;
+  const line = pts.map((p, i) => (i ? "L" : "M") + X(p.t).toFixed(1) + " " + Y(p.v).toFixed(1)).join(" ");
+  const up = pts[pts.length - 1].v >= pts[0].v;
+  const col = up ? "var(--good)" : "var(--bad)";
+  g += `<defs><linearGradient id="cf" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${up ? "var(--good)" : "var(--bad)"}" stop-opacity=".28"/><stop offset="1" stop-color="${up ? "var(--good)" : "var(--bad)"}" stop-opacity="0"/></linearGradient></defs>`;
+  g += `<path d="${line} L ${X(t1)} ${H - B} L ${X(t0)} ${H - B} Z" fill="url(#cf)"/>`;
+  g += `<path d="${line}" fill="none" stroke="${col}" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>`;
+  for (const p of pts) g += `<circle cx="${X(p.t)}" cy="${Y(p.v)}" r="${p === pts[pts.length - 1] ? 5 : 3.2}" fill="${p.recon ? "var(--bg)" : col}" stroke="${col}" stroke-width="2"><title>${fmt(p.t)}: ${esc(money(p.v))}${p.recon ? " (rebuilt from Cardmarket averages)" : ""}</title></circle>`;
+  svg.innerHTML = g; return svg;
+}
+function tabCards() {
+  S.cfilter = S.cfilter || { q: "", sort: "value", group: "set" };
+  const f = S.cfilter;
+  const box = h("div", { class: "glass panel stack" });
+  const listEl = h("div", { class: "list" });
+  const draw = () => {
+    listEl.innerHTML = "";
+    let cards = S.items.filter(i => i.kind === "card");
+    if (f.q) { const q = f.q.toLowerCase(); cards = cards.filter(i => (i.name + " " + i.setName + " " + i.number + " " + i.rarity).toLowerCase().includes(q)); }
+    const sorters = { value: (a, b) => unitUSD(b) * (b.qty || 1) - unitUSD(a) * (a.qty || 1), name: (a, b) => a.name.localeCompare(b.name), added: (a, b) => b.added - a.added, number: (a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0), gain: (a, b) => (unitUSD(b) - (b.paid || 0)) * (b.qty || 1) - (unitUSD(a) - (a.paid || 0)) * (a.qty || 1) };
+    cards.sort(sorters[f.sort]);
+    if (!cards.length) {
+      listEl.append(h("div", { class: "empty" }, h("h3", {}, S.items.some(i => i.kind === "card") ? "No cards match" : "No cards yet"),
+        h("div", {}, S.items.some(i => i.kind === "card") ? "Clear the search to see everything." : "Scan a card or search by name on the Scanner tab."),
+        S.items.length ? null : h("div", { style: "margin-top:12px" }, h("button", { class: "btn primary", onclick: () => setView("scan"), html: ICON.cam + "Open scanner" }))));
+      return;
+    }
+    const groups = new Map();
+    for (const c of cards) { const k = f.group === "set" ? (c.setName || "Unknown set") : f.group === "rarity" ? (c.rarity || "Unknown rarity") : "All cards"; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(c); }
+    for (const [k, arr] of groups) {
+      if (f.group !== "none") listEl.append(h("div", { class: "group-h" }, h("h3", {}, k), h("span", { class: "small muted num" }, `${arr.reduce((a, b) => a + (b.qty || 1), 0)} · ${money(arr.reduce((a, b) => a + unitUSD(b) * (b.qty || 1), 0))}`)));
+      for (const it of arr) listEl.append(itemRow(it));
+    }
+  };
+  box.append(
+    h("div", { class: "row" },
+      h("input", { class: "inp", style: "flex:1 1 200px", type: "search", id: "cardFilter", placeholder: "Filter your cards", value: f.q, oninput: e => { f.q = e.target.value; draw(); }, "aria-label": "Filter your cards" }),
+      h("select", { class: "sel", id: "cardSort", "aria-label": "Sort", onchange: e => { f.sort = e.target.value; draw(); } }, ...[["value", "Highest value"], ["gain", "Biggest gain"], ["added", "Newest"], ["name", "Name A–Z"], ["number", "Card number"]].map(([k, l]) => h("option", { value: k, selected: f.sort === k }, l))),
+      h("select", { class: "sel", id: "cardGroup", "aria-label": "Group", onchange: e => { f.group = e.target.value; draw(); } }, ...[["set", "Group by set"], ["rarity", "Group by rarity"], ["none", "No groups"]].map(([k, l]) => h("option", { value: k, selected: f.group === k }, l)))),
+    listEl);
+  draw(); return box;
+}
+function itemRow(it) {
+  const u = unitUSD(it), q = it.qty || 1, gain = it.paid ? (u - it.paid) / it.paid : null;
+  return h("div", { class: "item", tabindex: 0, onclick: () => openDetail(it), onkeydown: e => e.key === "Enter" && openDetail(it) },
+    cardImg(it),
+    h("div", { style: "min-width:0" }, h("div", { class: "nm" }, it.name, q > 1 ? h("span", { class: "muted" }, ` ×${q}`) : ""),
+      h("div", { class: "meta" }, it.kind === "card" ? `${it.number || "?"}${it.printedTotal ? "/" + it.printedTotal : ""}` : (it.setName || ""), ...chipsFor(it))),
+    h("div", { class: "val" }, h("div", { class: "num" }, money(u * q)), h("div", { class: "small num " + (gain == null ? "muted" : gain >= 0 ? "up" : "down") }, gain == null ? (it.prices?.src === "ai" ? "AI est." : "") : pct(gain))));
+}
+
+/* ---------- Sealed ---------- */
+const SEALED_TYPES = ["Booster Box", "Elite Trainer Box", "Booster Bundle", "Collection Box", "Booster Pack", "Tin", "Other"];
+function tabSealed() {
+  const items = S.items.filter(i => i.kind === "sealed");
+  const box = h("div", { class: "glass panel stack" },
+    h("div", { class: "row between" }, h("h2", {}, "Sealed product"), h("button", { class: "btn sm primary", onclick: () => openSealed(), html: ICON.plus + "Add sealed" })),
+    items.length ? h("div", { class: "list" }, ...items.map(itemRow)) :
+      h("div", { class: "empty" }, h("h3", {}, "No sealed product yet"), h("div", {}, "Add booster boxes, ETBs and bundles with what you paid and today's value. Check value against eBay sold listings from the item.")));
+  return box;
+}
+function openSealed(it) {
+  const isNew = !it; it = it || { id: uid(), kind: "sealed", name: "", ptype: "Booster Box", setName: "", qty: 1, paid: 0, value: 0, added: Date.now() };
+  const r = rate(S.settings.cur);
+  const f = h("form", { class: "stack", onsubmit: e => {
+    e.preventDefault(); const fd = new FormData(f);
+    Object.assign(it, { name: fd.get("name").trim(), ptype: fd.get("ptype"), setName: fd.get("setName").trim(), qty: Math.max(1, +fd.get("qty") || 1), paid: (+fd.get("paid") || 0) / r, value: (+fd.get("value") || 0) / r });
+    if (!it.name) { toast("Give the product a name.", "bad"); return; }
+    if (isNew) S.items.unshift(it); Store.saveItem(it); snapshotHistory(); closeSheet(); render(); toast(isNew ? "Sealed product added" : "Saved");
+  } },
+    h("h2", {}, isNew ? "Add sealed product" : "Edit sealed product"),
+    fld("Product name", h("input", { class: "inp", name: "name", id: "sName", value: it.name, placeholder: "e.g. Scarlet & Violet 151 Booster Bundle", required: true })),
+    h("div", { class: "grid2", style: "gap:10px" },
+      fld("Type", h("select", { class: "sel", name: "ptype", id: "sType" }, ...SEALED_TYPES.map(t => h("option", { selected: it.ptype === t }, t)))),
+      fld("Set", h("input", { class: "inp", name: "setName", id: "sSet", value: it.setName, placeholder: "e.g. Prismatic Evolutions" }))),
+    h("div", { class: "grid2", style: "gap:10px;grid-template-columns:repeat(auto-fit,minmax(120px,1fr))" },
+      fld("Quantity", h("input", { class: "inp num", name: "qty", id: "sQty", type: "number", min: 1, value: it.qty })),
+      fld(`Paid each (${S.settings.cur})`, h("input", { class: "inp num", name: "paid", id: "sPaid", type: "number", step: "0.01", min: 0, value: +(it.paid * r).toFixed(2) })),
+      fld(`Value each (${S.settings.cur})`, h("input", { class: "inp num", name: "value", id: "sVal", type: "number", step: "0.01", min: 0, value: +(it.value * r).toFixed(2) }))),
+    h("div", { class: "row" }, h("a", { class: "btn sm ghost", href: ebaySold(it), target: "_blank", rel: "noopener" }, "Check eBay sold prices ↗")),
+    h("div", { class: "row" }, h("button", { class: "btn primary", type: "submit" }, isNew ? "Add" : "Save"),
+      !isNew ? h("button", { class: "btn", type: "button", onclick: () => { removeItem(it.id); closeSheet(); render(); } }, "Delete") : null,
+      h("button", { class: "btn ghost", type: "button", onclick: closeSheet }, "Cancel")));
+  openSheet(f);
+}
+const fld = (label, input) => h("div", { class: "field" }, h("label", { for: input.id }, label), input);
+
+/* ---------- Master sets ---------- */
+function tabSets() {
+  const box = h("div", { class: "stack" });
+  const head = h("div", { class: "glass panel stack" },
+    h("div", { class: "row between" }, h("h2", {}, "Master set progress"),
+      h("div", { class: "row" },
+        h("div", { class: "seg" }, ...[[true, "Master (incl. secrets)"], [false, "Base set"]].map(([k, l]) => h("button", { "aria-pressed": S.settings.master === k ? "true" : "false", onclick: () => { S.settings.master = k; Store.saveMeta(); render(); } }, l))),
+        h("button", { class: "btn sm primary", onclick: pickSet, html: ICON.plus + "Track a set" }))));
+  box.append(head);
+  // auto-include sets present in collection
+  const owned = new Map();
+  for (const it of S.items) if (it.kind === "card" && it.setId) { if (!owned.has(it.setId)) owned.set(it.setId, new Set()); owned.get(it.setId).add(String(it.number)); }
+  const tracked = [...S.sets];
+  for (const it of S.items) if (it.kind === "card" && it.setId && !tracked.some(s => s.id === it.setId)) tracked.push({ id: it.setId, name: it.setName, series: it.series, printedTotal: it.printedTotal, total: it.setTotal || it.printedTotal, auto: true });
+  if (!tracked.length) { head.append(h("div", { class: "empty" }, h("h3", {}, "No sets tracked"), h("div", {}, "Add cards or pick a set to see how close you are to completing it."))); return box; }
+  const grid = h("div", { class: "kpis", style: "grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr))" });
+  for (const s of tracked) {
+    const have = owned.get(s.id) ? owned.get(s.id).size : 0;
+    const total = S.settings.master ? (s.total || s.printedTotal || 0) : (s.printedTotal || s.total || 0);
+    const haveBase = S.settings.master ? have : [...(owned.get(s.id) || [])].filter(n => (parseInt(n) || 0) <= (s.printedTotal || 999)).length;
+    const p = total ? Math.min(1, haveBase / total) : 0;
+    grid.append(h("div", { class: "glass setcard" },
+      h("div", { class: "row between" }, s.logo && !ENV.claude ? h("img", { src: s.logo, alt: "" }) : h("span", { class: "eyebrow" }, s.series || "Set"), h("span", { class: "num", style: "font-weight:700" }, total ? Math.round(p * 100) + "%" : "—")),
+      h("h3", {}, s.name || s.id),
+      h("div", { class: "prog" }, h("i", { style: `width:${p * 100}%` })),
+      h("div", { class: "row between small muted" }, h("span", { class: "num" }, `${haveBase} / ${total || "?"} cards`),
+        h("span", { class: "row", style: "gap:4px" },
+          ENV.online ? h("button", { class: "btn sm ghost", onclick: () => showMissing(s, owned.get(s.id) || new Set()) }, "Missing") : null,
+          !s.auto ? h("button", { class: "x", title: "Stop tracking", "aria-label": "Stop tracking " + s.name, onclick: () => { S.sets = S.sets.filter(x => x.id !== s.id); Store.saveMeta(); render(); } }, "×") : null))));
+  }
+  box.append(grid); return box;
+}
+async function pickSet() {
+  if (!ENV.online) { toast(ENV.claude ? "The set list loads on the web version. Sets you scan here are tracked automatically." : "Set list needs an internet connection.", "bad"); return; }
+  const list = h("div", { class: "list" }, h("div", { class: "small muted" }, h("span", { class: "spin" }), " Loading sets…"));
+  const inp = h("input", { class: "inp", type: "search", id: "setQ", placeholder: "Filter sets", "aria-label": "Filter sets" });
+  openSheet(h("div", { class: "stack" }, h("h2", {}, "Track a set"), inp, list));
+  try {
+    const sets = await allSets();
+    const draw = () => {
+      list.innerHTML = ""; const q = inp.value.toLowerCase();
+      for (const s of sets.filter(s => !q || (s.name + s.series).toLowerCase().includes(q)).slice(0, 80))
+        list.append(h("div", { class: "item", tabindex: 0, style: "grid-template-columns:70px 1fr auto", onclick: () => {
+          if (!S.sets.some(x => x.id === s.id)) S.sets.push({ id: s.id, name: s.name, series: s.series, printedTotal: s.printedTotal, total: s.total, logo: s.images && s.images.logo });
+          Store.saveMeta(); closeSheet(); render(); toast("Tracking " + s.name);
+        } }, h("img", { src: s.images.symbol, alt: "", style: "width:28px;height:28px;object-fit:contain;aspect-ratio:auto;border:0;background:none" }),
+          h("div", {}, h("div", { class: "nm" }, s.name), h("div", { class: "meta" }, `${s.series} · ${s.releaseDate}`)), h("span", { class: "num small" }, s.total)));
+    };
+    inp.oninput = draw; draw();
+  } catch (e) { list.innerHTML = ""; list.append(h("div", { style: "color:var(--bad)" }, e.message)); }
+}
+async function showMissing(s, have) {
+  const body = h("div", { class: "binder" }, h("div", { class: "small muted" }, h("span", { class: "spin" }), " Loading checklist…"));
+  openSheet(h("div", { class: "stack" }, h("h2", {}, `Missing from ${s.name}`), body));
+  try {
+    const cards = await setCardList(s.id);
+    const miss = cards.filter(c => !have.has(String(c.number)) && (S.settings.master || (parseInt(c.number) || 0) <= (s.printedTotal || 999)))
+      .sort((a, b) => (parseInt(a.number) || 0) - (parseInt(b.number) || 0));
+    body.innerHTML = "";
+    if (!miss.length) body.append(h("div", { class: "empty" }, h("h3", {}, "Set complete"), "Every card is in your vault."));
+    for (const c of miss) body.append(h("figure", {}, h("div", { class: "holo" }, h("img", { src: c.images.small, alt: c.name, loading: "lazy" })), h("figcaption", {}, h("span", {}, c.name), h("span", { class: "num muted" }, c.number))));
+  } catch (e) { body.innerHTML = ""; body.append(h("div", { style: "color:var(--bad)" }, e.message)); }
+}
+
+/* ---------- Alerts ---------- */
+function tabAlerts() {
+  const box = h("div", { class: "glass panel stack" },
+    h("div", { class: "row between" }, h("h2", {}, "Price alerts"),
+      !ENV.claude && "Notification" in window ? h("button", { class: "btn sm", onclick: enableNotify, html: ICON.bell + (S.settings.notify && Notification.permission === "granted" ? "Notifications on" : "Turn on notifications") }) : null),
+    h("p", { class: "small muted", style: "margin:0" }, ENV.claude ? "Alerts check whenever you open the vault and show here as a banner." : "Alerts check when the app opens and every 30 minutes while it's open. Prices update once a day at the source. Set one from any card's detail page."));
+  if (!S.alerts.length) { box.append(h("div", { class: "empty" }, h("h3", {}, "No alerts set"), "Open a card and choose “Set price alert”.")); return box; }
+  for (const a of S.alerts) {
+    const it = S.items.find(i => i.id === a.itemId); if (!it) continue;
+    const now = unitUSD(it), dist = a.target ? (a.target - now) / now : 0;
+    box.append(h("div", { class: "item", style: "grid-template-columns:46px 1fr auto auto", onclick: e => { if (!e.target.closest("button,input")) openDetail(it); } }, cardImg(it),
+      h("div", { style: "min-width:0" }, h("div", { class: "nm" }, it.name), h("div", { class: "meta num" }, `${a.dir === "above" ? "Rises to" : "Falls to"} ${money(a.target)} · now ${money(now)} · ${pct(dist)} away`)),
+      h("span", { class: "switch" }, h("input", { type: "checkbox", id: "al" + a.id, "aria-label": "Alert active", checked: a.active, onchange: e => { a.active = e.target.checked; Store.saveAlert(a); } }), h("span", {})),
+      h("button", { class: "x", "aria-label": "Delete alert", onclick: () => { S.alerts = S.alerts.filter(x => x !== a); Store.removeAlert(a.id); render(); } }, "×")));
+  }
+  return box;
+}
+async function enableNotify() {
+  if (!("Notification" in window)) return;
+  const p = await Notification.requestPermission();
+  S.settings.notify = p === "granted"; Store.saveMeta(); render();
+  toast(p === "granted" ? "Notifications on" : "Notifications blocked in browser settings", p === "granted" ? "" : "bad");
+}
+
+/* ---------- sheet ---------- */
+function openSheet(content) {
+  closeSheet();
+  const sc = h("div", { class: "scrim", onclick: e => { if (e.target === sc) closeSheet(); } }, h("div", { class: "sheet glass", role: "dialog", "aria-modal": "true" }, h("div", { class: "grab" }), content));
+  $("#sheetRoot").append(sc); document.addEventListener("keydown", escClose);
+  setTimeout(() => sc.querySelector("input,select,button")?.focus({ preventScroll: true }), 50);
+}
+function closeSheet() { $("#sheetRoot").innerHTML = ""; document.removeEventListener("keydown", escClose); }
+function escClose(e) { if (e.key === "Escape") closeSheet(); }
+</script>
+<script>
+"use strict";
+/* ---------- Card detail + multi-market prices ---------- */
+function openDetail(it) {
+  if (it.kind === "sealed") return openSealed(it);
+  let mode = "raw";
+  const wrap = h("div", { class: "stack", style: "gap:16px" });
+  const draw = () => {
+    wrap.innerHTML = "";
+    const inColl = S.items.includes(it);
+    const t = it.prices && it.prices.tcg, cm = it.prices && it.prices.cm, row = tcgRow(it), raw = rawUSD(it);
+    const vars = variantsOf(it);
+    const upd = it.prices && it.prices.t ? new Date(it.prices.t).toLocaleString() : "—";
+    wrap.append(h("div", { class: "detail-hero" },
+      h("div", { class: "holo" }, cardImg(it, true)),
+      h("div", { class: "stack", style: "gap:8px;min-width:0" },
+        h("div", { class: "eyebrow" }, `${it.series ? it.series + " · " : ""}${it.setName || ""}`),
+        h("h1", {}, it.name),
+        h("div", { class: "row", style: "gap:6px" }, h("span", { class: "chip num" }, `#${it.number || "?"}${it.printedTotal ? "/" + it.printedTotal : ""}`), it.rarity ? h("span", { class: "chip" }, it.rarity) : null, ...chipsFor(it)),
+        h("div", { class: "row", style: "gap:18px;margin-top:6px" },
+          h("div", {}, h("div", { class: "eyebrow" }, "Your value"), h("div", { class: "num", style: "font-size:26px;font-weight:700" }, money(unitUSD(it) * (it.qty || 1))), h("div", { class: "small muted" }, `${it.qty || 1} × ${money(unitUSD(it))}`)),
+          it.paid ? h("div", {}, h("div", { class: "eyebrow" }, "Gain"), h("div", { class: "num " + (unitUSD(it) >= it.paid ? "up" : "down"), style: "font-size:20px;font-weight:700" }, money((unitUSD(it) - it.paid) * (it.qty || 1), { sign: true })), h("div", { class: "small muted" }, pct((unitUSD(it) - it.paid) / it.paid))) : null),
+        h("div", { class: "small muted" }, it.prices?.src === "live" ? `Prices from TCGplayer & Cardmarket via pokemontcg.io · saved ${upd}` : it.prices?.src === "ai" ? "Price is Claude's estimate from what it knows, not a live quote. Open the web version to fetch live prices." : ""))));
+
+    // raw / graded toggle
+    wrap.append(h("div", { class: "row between" }, h("h2", {}, "Market prices"),
+      h("div", { class: "seg" }, ...[["raw", "Raw"], ["graded", "Graded"]].map(([k, l]) => h("button", { "aria-pressed": mode === k ? "true" : "false", onclick: () => { mode = k; draw(); } }, l)))));
+    if (mode === "raw") {
+      const tcgP = t && t.p ? (t.p[it.variant] || row) : null;
+      const cp = cm && cm.p;
+      const eur = v => v ? money(v / usdToEur()) : "—";
+      wrap.append(h("div", { class: "markets" },
+        h("div", { class: "mk" }, h("h3", {}, "TCGplayer", h("a", { href: tcgSearch(it), target: "_blank", rel: "noopener" }, "Open ↗")),
+          vars.length > 1 ? h("select", { class: "sel", id: "varSel", style: "margin-top:8px;width:100%", "aria-label": "Variant", onchange: e => { it.variant = e.target.value; if (inColl) Store.saveItem(it); draw(); } }, ...vars.map(k => h("option", { value: k, selected: it.variant === k }, VARIANT_LABEL[k] || k))) : null,
+          tcgP ? h("dl", {}, h("dt", {}, "Market"), h("dd", {}, money(tcgP.market)), h("dt", {}, "Low"), h("dd", {}, money(tcgP.low)), h("dt", {}, "Mid"), h("dd", {}, money(tcgP.mid)), h("dt", {}, "High"), h("dd", {}, money(tcgP.high)))
+            : h("p", { class: "small muted" }, "No TCGplayer listing data for this card.")),
+        h("div", { class: "mk" }, h("h3", {}, "Cardmarket", h("a", { href: cmSearch(it), target: "_blank", rel: "noopener" }, "Open ↗")),
+          cp ? h("dl", {}, h("dt", {}, it.variant === "reverseHolofoil" ? "Rev. holo trend" : "Trend"), h("dd", {}, eur(it.variant === "reverseHolofoil" ? cp.reverseHoloTrend || cp.trendPrice : cp.trendPrice)),
+            h("dt", {}, "Avg sell"), h("dd", {}, eur(cp.averageSellPrice)), h("dt", {}, "Low"), h("dd", {}, eur(cp.lowPrice)), h("dt", {}, "30-day avg"), h("dd", {}, eur(cp.avg30)), h("dt", {}, "7-day avg"), h("dd", {}, eur(cp.avg7)))
+            : h("p", { class: "small muted" }, "No Cardmarket data for this card.")),
+        h("div", { class: "mk" }, h("h3", {}, "eBay sold", h("a", { href: ebaySold(it), target: "_blank", rel: "noopener" }, "Open ↗")),
+          h("p", { class: "small muted", style: "margin:.5em 0" }, "Completed sales, newest first. eBay has no free price feed, so this opens the live sold-listings search for this exact card."),
+          h("a", { class: "btn sm", href: ebaySold(it), target: "_blank", rel: "noopener" }, "See recent sold ↗"))));
+      if (ENV.cap.sample && (!t || !cm)) wrap.append(h("div", { class: "row" }, h("button", { class: "btn sm", onclick: e => aiPriceCheck(it, e.currentTarget, draw) }, "Ask Claude for a price estimate")));
+    } else {
+      wrap.append(h("div", { class: "mk scrollx" },
+        h("table", { class: "t" }, h("thead", {}, h("tr", {}, h("th", {}, "Grade"), h("th", { class: "n" }, "Est. value"), h("th", { class: "n" }, "vs raw"))),
+          h("tbody", {}, h("tr", {}, h("td", {}, "Raw (NM)"), h("td", { class: "n" }, money(raw)), h("td", { class: "n" }, "—")),
+            ...GRADES.map(g => { const v = gradedUSD(raw, g.co, g.g); return h("tr", {}, h("td", {}, `${g.co} ${g.g}`), h("td", { class: "n" }, money(v)), h("td", { class: "n" }, raw ? "×" + (v / raw).toFixed(2) : "—")); }))),
+        h("p", { class: "small muted", style: "margin:.6em 0 0" }, h("span", { class: "est" }, "Model estimate "), "Graded values use typical premiums over the raw price, scaled by price tier, with a floor for grading cost. Check real slab sales before buying or selling:"),
+        h("div", { class: "row", style: "margin-top:6px" },
+          h("a", { class: "btn sm", href: psaSearch(it), target: "_blank", rel: "noopener" }, "PSA auction prices ↗"),
+          h("a", { class: "btn sm", href: p130(it), target: "_blank", rel: "noopener" }, "130point sales ↗"),
+          h("a", { class: "btn sm", href: ebaySold({ ...it, grade: { co: "PSA", g: 10 } }), target: "_blank", rel: "noopener" }, "eBay PSA 10 sold ↗"))));
+    }
+
+    // condition
+    if (it.cond) {
+      const c = it.cond;
+      wrap.append(h("div", { class: "mk" }, h("h3", {}, "Scanned condition", h("span", { class: "chip" }, `${Grader.condition(c.overall)} · est. ${c.overall}`)),
+        h("dl", {}, h("dt", {}, "Corners"), h("dd", {}, c.corners), h("dt", {}, "Edges"), h("dd", {}, c.edges), h("dt", {}, "Surface"), h("dd", {}, c.surface), h("dt", {}, "Centering"), h("dd", {}, `${c.centering} (${c.lr}/${100 - c.lr} · ${c.tb}/${100 - c.tb})`)),
+        it.ai && it.ai.gradeNote ? h("p", { class: "small muted", style: "margin:.5em 0 0" }, "Claude: " + it.ai.gradeNote) : null));
+    }
+
+    // edit
+    const r = rate(S.settings.cur);
+    const form = h("form", { class: "stack", onsubmit: e => {
+      e.preventDefault(); const fd = new FormData(form);
+      it.qty = Math.max(1, +fd.get("qty") || 1); it.paid = (+fd.get("paid") || 0) / r;
+      const gco = fd.get("gco"); it.grade = { co: gco, g: gco === "RAW" ? null : +fd.get("gg") };
+      const mv = fd.get("mv"); it.manualValue = mv ? (+mv) / r : null; it.notes = fd.get("notes");
+      if (!inColl) S.items.unshift(it);
+      Store.saveItem(it); snapshotHistory(); toast(inColl ? "Saved" : "Added " + it.name); closeSheet(); render();
+    } },
+      h("h2", {}, "Your copy"),
+      h("div", { class: "grid2", style: "gap:10px;grid-template-columns:repeat(auto-fit,minmax(130px,1fr))" },
+        fld("Quantity", h("input", { class: "inp num", id: "dQty", name: "qty", type: "number", min: 1, value: it.qty || 1 })),
+        fld(`Paid each (${S.settings.cur})`, h("input", { class: "inp num", id: "dPaid", name: "paid", type: "number", step: "0.01", min: 0, value: it.paid ? +(it.paid * r).toFixed(2) : "" })),
+        fld("Graded by", h("select", { class: "sel", id: "dGco", name: "gco" }, ...["RAW", "PSA", "BGS", "CGC"].map(c => h("option", { value: c, selected: (it.grade?.co || "RAW") === c }, c === "RAW" ? "Raw (ungraded)" : c)))),
+        fld("Grade", h("select", { class: "sel", id: "dGg", name: "gg" }, ...[10, 9.5, 9, 8.5, 8, 7, 6].map(g => h("option", { value: g, selected: it.grade?.g === g }, g)))),
+        fld(`Override value (${S.settings.cur})`, h("input", { class: "inp num", id: "dMv", name: "mv", type: "number", step: "0.01", min: 0, placeholder: "Use market", value: it.manualValue ? +(it.manualValue * r).toFixed(2) : "" }))),
+      fld("Notes", h("input", { class: "inp", id: "dNotes", name: "notes", value: it.notes || "", placeholder: "Where you got it, flaws, sleeve…" })),
+      h("div", { class: "row" }, h("button", { class: "btn primary", type: "submit" }, inColl ? "Save" : "Add to collection"),
+        inColl ? h("button", { class: "btn", type: "button", onclick: () => openAlert(it), html: ICON.bell + "Set price alert" }) : null,
+        inColl ? h("button", { class: "btn", type: "button", onclick: () => { S.trade.mine.push({ name: it.name, usd: unitUSD(it), itemId: it.id, note: `${it.setName} ${it.number}` }); LS.set("trade", S.trade); toast("Added to your side of the trade"); } }, "Add to trade") : null,
+        inColl ? h("button", { class: "btn ghost", type: "button", style: "color:var(--bad)", onclick: () => { removeItem(it.id); closeSheet(); render(); } }, "Remove") : null));
+    wrap.append(h("div", { class: "mk" }, form));
+  };
+  draw(); openSheet(wrap);
+}
+async function aiPriceCheck(it, btn, redraw) {
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Asking Claude…';
+  try {
+    const out = await ENV.cap.sample.json(`Estimate the current near-mint raw market price in USD for this Pokémon TCG card from your knowledge: "${it.name}" ${it.number ? "#" + it.number : ""}${it.printedTotal ? "/" + it.printedTotal : ""}, set "${it.setName}", variant ${VARIANT_LABEL[it.variant] || it.variant}, rarity "${it.rarity}". Reply only JSON {"estUSD":number,"low":number,"high":number,"note":"one short sentence on what drives the price and how current your knowledge is"}`, { modelTier: "default" });
+    if (out && typeof out.estUSD === "number") { it.aiEstUSD = out.estUSD; it.aiNote = out.note; if (!it.prices) it.prices = { src: "ai", t: Date.now() }; if (S.items.includes(it)) Store.saveItem(it); toast(`Claude estimate: ${money(out.low)}–${money(out.high)}`); redraw(); }
+  } catch (e) { toast("Estimate failed: " + (e.message || e.code), "bad"); btn.disabled = false; btn.textContent = "Ask Claude for a price estimate"; }
+}
+function openAlert(it) {
+  const now = unitUSD(it), r = rate(S.settings.cur);
+  const f = h("form", { class: "stack", onsubmit: e => {
+    e.preventDefault(); const fd = new FormData(f); const target = (+fd.get("target")) / r;
+    if (!target) { toast("Enter a target price.", "bad"); return; }
+    const a = { id: uid(), itemId: it.id, name: it.name, dir: fd.get("dir"), target, active: true, created: Date.now(), fired: 0 };
+    S.alerts.push(a); Store.saveAlert(a); checkAlerts(); closeSheet(); toast(`Alert set: ${it.name} ${a.dir === "above" ? "≥" : "≤"} ${money(target)}`);
+    if (!ENV.claude && "Notification" in window && Notification.permission === "default") enableNotify();
+  } },
+    h("h2", {}, "Price alert for " + it.name), h("div", { class: "small muted" }, "Now " + money(now)),
+    h("div", { class: "grid2", style: "gap:10px;grid-template-columns:repeat(auto-fit,minmax(150px,1fr))" },
+      fld("Notify me when it", h("select", { class: "sel", id: "aDir", name: "dir" }, h("option", { value: "above" }, "Rises to or above"), h("option", { value: "below" }, "Falls to or below"))),
+      fld(`Target (${S.settings.cur})`, h("input", { class: "inp num", id: "aT", name: "target", type: "number", step: "0.01", min: 0, value: +(now * 1.15 * r).toFixed(2) }))),
+    h("div", { class: "row" }, ...[-20, -10, 10, 20, 50].map(p => h("button", { type: "button", class: "btn sm", onclick: () => { $("#aT").value = +(now * (1 + p / 100) * r).toFixed(2); $("#aDir").value = p > 0 ? "above" : "below"; } }, (p > 0 ? "+" : "") + p + "%"))),
+    h("div", { class: "row" }, h("button", { class: "btn primary", type: "submit", html: ICON.bell + "Save alert" }), h("button", { class: "btn ghost", type: "button", onclick: () => openDetail(it) }, "Back")));
+  openSheet(f);
+}
+
+/* ---------- Trade analyzer ---------- */
+function viewTrade() {
+  const T = S.trade, sum = a => a.reduce((x, y) => x + (y.usd || 0) * (y.qty || 1), 0);
+  const mine = sum(T.mine), theirs = sum(T.theirs), diff = theirs - mine, big = Math.max(mine, theirs);
+  const fair = big ? Math.min(mine, theirs) / big : null;
+  const save = () => { LS.set("trade", T); render(); };
+  const side = (key, title, cls) => h("div", { class: "glass side " + cls },
+    h("div", { class: "row between" }, h("h2", {}, title), h("span", { class: "num", style: "font-weight:700;font-size:18px" }, money(sum(T[key])))),
+    ...T[key].map((x, i) => h("div", { class: "tline" }, h("span", { class: "nm", title: x.note || "" }, x.name, x.qty > 1 ? ` ×${x.qty}` : ""), h("span", { class: "num" }, money(x.usd * (x.qty || 1))), h("button", { class: "x", "aria-label": "Remove " + x.name, onclick: () => { T[key].splice(i, 1); save(); } }, "×"))),
+    T[key].length ? null : h("div", { class: "small muted" }, key === "mine" ? "Add cards from your vault." : "Add the cards they're offering."),
+    h("div", { class: "row" },
+      key === "mine" ? h("button", { class: "btn sm", onclick: () => pickFromVault(x => { T.mine.push(x); save(); }), html: ICON.plus + "From my vault" }) : h("button", { class: "btn sm", onclick: () => pickCardForTrade(x => { T.theirs.push(x); save(); }), html: ICON.search + "Find card" }),
+      h("button", { class: "btn sm ghost", onclick: () => manualTrade(x => { T[key].push(x); save(); }) }, "Add by value")));
+  const verdict = fair == null ? "Add cards to both sides" : fair >= .95 ? "Fair trade" : diff > 0 ? `You gain ${money(diff)}` : `You give up ${money(-diff)}`;
+  return h("section", { class: "view" },
+    h("div", { class: "row between" }, h("div", {}, h("div", { class: "eyebrow" }, "Trade analyzer"), h("h1", {}, "Is this trade fair?")),
+      h("div", { class: "row" }, h("span", { class: "small muted" }, "Price basis"),
+        h("div", { class: "seg" }, ...[["tcg", "TCGplayer"], ["cm", "Cardmarket"]].map(([k, l]) => h("button", { "aria-pressed": S.settings.src === k ? "true" : "false", onclick: () => { S.settings.src = k; Store.saveMeta(); T.mine.forEach(x => { const it = S.items.find(i => i.id === x.itemId); if (it) x.usd = unitUSD(it); }); save(); } }, l))),
+        h("button", { class: "btn sm ghost", onclick: () => { T.mine = []; T.theirs = []; save(); } }, "Clear"))),
+    h("div", { class: "glass panel", style: "text-align:center" },
+      h("div", { class: "beam", style: `--tilt:${big ? clamp(diff / big * 14, -14, 14) : 0}deg`, "aria-hidden": "true" }, h("div", { class: "bar" }), h("div", { class: "pivot" })),
+      h("div", { class: "fair " + (fair == null ? "" : fair >= .95 ? "up" : diff > 0 ? "up" : "down") }, verdict),
+      h("div", { class: "small muted num", style: "margin-top:4px" }, fair == null ? "Fairness compares the smaller side to the larger one." : `Fairness ${(fair * 100).toFixed(1)}% · You give ${money(mine)} · You get ${money(theirs)}`)),
+    h("div", { class: "trade" }, side("mine", "My cards", "mine"), side("theirs", "Their cards", "theirs")));
+}
+function pickFromVault(cb) {
+  const list = h("div", { class: "list" });
+  const inp = h("input", { class: "inp", type: "search", id: "vq", placeholder: "Filter your vault", "aria-label": "Filter your vault" });
+  const draw = () => { list.innerHTML = ""; const q = inp.value.toLowerCase(); const arr = S.items.filter(i => !q || i.name.toLowerCase().includes(q)).slice(0, 60);
+    if (!arr.length) list.append(h("div", { class: "empty" }, "Your vault is empty. Scan some cards first."));
+    for (const it of arr) list.append(h("div", { class: "item", tabindex: 0, onclick: () => { cb({ name: it.name, usd: unitUSD(it), itemId: it.id, note: `${it.setName || ""} ${it.number || ""}` }); closeSheet(); } }, cardImg(it), h("div", { style: "min-width:0" }, h("div", { class: "nm" }, it.name), h("div", { class: "meta" }, it.setName || "", ...chipsFor(it))), h("div", { class: "num" }, money(unitUSD(it))))); };
+  inp.oninput = draw; draw();
+  openSheet(h("div", { class: "stack" }, h("h2", {}, "Pick from your vault"), inp, list));
+}
+function pickCardForTrade(cb) {
+  openSheet(h("div", { class: "stack" }, h("h2", {}, "Find their card"), searchBox(c => { const it = itemFromCard(c); cb({ name: c.name, usd: rawUSD(it), note: `${c.set.name} ${c.number}` }); closeSheet(); })));
+}
+function manualTrade(cb) {
+  const r = rate(S.settings.cur);
+  const f = h("form", { class: "stack", onsubmit: e => { e.preventDefault(); const fd = new FormData(f); const name = fd.get("n").trim(); const v = +fd.get("v"); if (!name || !v) { toast("Enter a name and a value.", "bad"); return; } cb({ name, usd: v / r, qty: Math.max(1, +fd.get("q") || 1) }); closeSheet(); } },
+    h("h2", {}, "Add by value"),
+    fld("Card or item", h("input", { class: "inp", id: "mN", name: "n", placeholder: "e.g. Umbreon VMAX 215/203" })),
+    h("div", { class: "grid2", style: "gap:10px;grid-template-columns:repeat(auto-fit,minmax(130px,1fr))" },
+      fld(`Value each (${S.settings.cur})`, h("input", { class: "inp num", id: "mV", name: "v", type: "number", step: "0.01", min: 0 })),
+      fld("Quantity", h("input", { class: "inp num", id: "mQ", name: "q", type: "number", min: 1, value: 1 }))),
+    h("button", { class: "btn primary", type: "submit" }, "Add"));
+  openSheet(f);
+}
+
+/* ---------- Exports ---------- */
+function exportRows() {
+  const cur = S.settings.cur, r = rate(cur);
+  return S.items.map(it => {
+    const u = unitUSD(it), q = it.qty || 1, row = tcgRow(it), cm = it.prices?.cm?.p;
+    return {
+      Type: it.kind === "sealed" ? (it.ptype || "Sealed") : "Card", Quantity: q, Name: it.name, Set: it.setName || "", "Set Code": it.setCode || it.setId || "",
+      "Card Number": it.number ? `${it.number}${it.printedTotal ? "/" + it.printedTotal : ""}` : "", Rarity: it.rarity || "", Variant: it.kind === "card" ? (VARIANT_LABEL[it.variant] || it.variant || "") : "",
+      "Alt Art": (it.tags || []).includes("alt") ? "Yes" : "", "Secret Rare": (it.tags || []).includes("secret") ? "Yes" : "",
+      Condition: it.cond ? Grader.condition(it.cond.overall) : "", "Grading Co": it.grade && it.grade.co !== "RAW" ? it.grade.co : "", Grade: it.grade && it.grade.co !== "RAW" ? it.grade.g : "",
+      "Est Grade": it.cond ? it.cond.overall : "", Corners: it.cond ? it.cond.corners : "", Edges: it.cond ? it.cond.edges : "", Surface: it.cond ? it.cond.surface : "", Centering: it.cond ? `${it.cond.lr}/${100 - it.cond.lr} LR ${it.cond.tb}/${100 - it.cond.tb} TB` : "",
+      [`Price Each (${cur})`]: +(u * r).toFixed(2), [`Total Value (${cur})`]: +(u * q * r).toFixed(2), [`Paid Each (${cur})`]: +((it.paid || 0) * r).toFixed(2), [`Gain (${cur})`]: +((u - (it.paid || 0)) * q * r).toFixed(2),
+      "TCGplayer Market (USD)": row && row.market || "", "TCGplayer Low (USD)": row && row.low || "", "Cardmarket Trend (EUR)": cm && cm.trendPrice || "",
+      "Price Source": it.manualValue ? "Manual" : it.prices?.src === "ai" ? "AI estimate" : it.kind === "sealed" ? "Manual" : "Live", "Price Date": it.prices?.t ? new Date(it.prices.t).toISOString().slice(0, 10) : "",
+      "pokemontcg.io ID": it.cardId || "", Notes: it.notes || ""
+    };
+  });
+}
+function toCSV(rows) {
+  if (!rows.length) return "";
+  const cols = Object.keys(rows[0]); const q = v => { const s = String(v ?? ""); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+  return [cols.join(","), ...rows.map(r => cols.map(c => q(r[c])).join(","))].join("\n");
+}
+function toText() {
+  return S.items.map(it => it.kind === "sealed" ? `${it.qty || 1} ${it.name} [${it.ptype}]` :
+    `${it.qty || 1} ${it.name}${it.setCode ? " [" + it.setCode + "]" : it.setName ? " [" + it.setName + "]" : ""} ${it.number || ""}${it.printedTotal ? "/" + it.printedTotal : ""}${/holo/i.test(it.variant) ? " (" + VARIANT_LABEL[it.variant] + ")" : ""}${it.grade && it.grade.co !== "RAW" ? " " + it.grade.co + " " + it.grade.g : it.cond ? " " + Grader.condition(it.cond.overall) : ""}`.replace(/\s+/g, " ").trim()).join("\n");
+}
+function openExport() {
+  if (!S.items.length) { toast("Nothing to export yet. Add some cards first.", "bad"); return; }
+  const stamp = today();
+  openSheet(h("div", { class: "stack" }, h("h2", {}, "Export your vault"),
+    h("p", { class: "small muted", style: "margin:0" }, `${S.items.length} line items, values in ${S.settings.cur}.`),
+    h("div", { class: "list" },
+      exportOpt("PDF report", "Summary, every card with condition sub-scores, prices and gains, sealed, sets and alerts.", () => exportPDF()),
+      exportOpt("CSV for sellers", "Spreadsheet columns that map onto TCGplayer, eBay and Cardmarket bulk upload sheets.", () => saveFile(`pkmon-vault-${stamp}.csv`, toCSV(exportRows()), "text/csv")),
+      exportOpt("Plain text list", "One line per card: qty, name, set, number, variant, condition.", () => saveFile(`pkmon-list-${stamp}.txt`, toText(), "text/plain")),
+      exportOpt("Copy list", "Copies the plain text list for pasting into a listing or chat.", () => copyText(toText())),
+      exportOpt("Full backup (JSON)", "Everything, to restore here or move between the web and Claude versions.", () => saveFile(`pkmon-backup-${stamp}.json`, JSON.stringify({ app: "PKmon", v: 1, at: Date.now(), items: S.items, alerts: S.alerts, sets: S.sets, history: S.history }), "application/json")))));
+}
+const exportOpt = (t, d, fn) => h("div", { class: "item", style: "grid-template-columns:1fr auto", tabindex: 0, onclick: fn, onkeydown: e => e.key === "Enter" && fn() }, h("div", {}, h("div", { class: "nm" }, t), h("div", { class: "meta" }, d)), h("span", { html: ICON.dl, style: "width:20px" }));
+async function copyText(s) {
+  try { await navigator.clipboard.writeText(s); toast("Copied"); }
+  catch { const ta = h("textarea", { class: "inp", rows: 8, readonly: true }); ta.value = s; openSheet(h("div", { class: "stack" }, h("h2", {}, "Copy this text"), ta)); ta.select(); }
+}
+async function exportPDF() {
+  if (!window.jspdf) { toast("PDF engine didn't load. Check your connection and reload.", "bad"); return; }
+  toast("Building PDF…");
+  const { jsPDF } = window.jspdf; const doc = new jsPDF({ orientation: "landscape", unit: "pt", format: "a4" });
+  const W = doc.internal.pageSize.getWidth(), cur = S.settings.cur, t = totals();
+  const txt = s => String(s).replace(/[^\x20-\x7E -ÿ]/g, c => ({ "−": "-", "€": "EUR ", "£": "GBP ", "¥": "JPY ", "₹": "INR ", "₩": "KRW ", "₺": "TRY ", "₪": "ILS ", "฿": "THB ", "₱": "PHP ", "₫": "VND ", "×": "x", "é": "e", "’": "'" }[c] || ""));
+  const m = v => txt(money(v));
+  // header band
+  doc.setFillColor(21, 23, 58); doc.rect(0, 0, W, 78, "F");
+  doc.setFillColor(232, 54, 26); doc.rect(0, 74, W / 4, 4, "F"); doc.setFillColor(233, 168, 0); doc.rect(W / 4, 74, W / 4, 4, "F"); doc.setFillColor(28, 127, 224); doc.rect(W / 2, 74, W / 4, 4, "F"); doc.setFillColor(15, 157, 99); doc.rect(3 * W / 4, 74, W / 4, 4, "F");
+  doc.setTextColor(255); doc.setFont("helvetica", "bold"); doc.setFontSize(22); doc.text("PKmon Vault Report", 36, 44);
+  doc.setFont("helvetica", "normal"); doc.setFontSize(10); doc.text(`${new Date().toLocaleString()}  ·  Values in ${cur}  ·  Price basis: ${S.settings.src === "cm" ? "Cardmarket trend" : "TCGplayer market"}`, 36, 62);
+  // KPIs
+  const k = [["Total value", m(t.v)], ["Cost basis", m(t.c)], ["Gain / loss", txt(money(t.g, { sign: true })) + "  " + txt(pct(t.gp))], ["Cards", String(t.cards)], ["Sealed", String(t.sealed)]];
+  k.forEach(([l, v], i) => { const x = 36 + i * ((W - 72) / 5); doc.setTextColor(110, 115, 156); doc.setFontSize(9); doc.text(l.toUpperCase(), x, 104); doc.setTextColor(21, 23, 58); doc.setFontSize(15); doc.setFont("helvetica", "bold"); doc.text(v, x, 124); doc.setFont("helvetica", "normal"); });
+  const cards = S.items.filter(i => i.kind === "card").sort((a, b) => unitUSD(b) * (b.qty || 1) - unitUSD(a) * (a.qty || 1));
+  const thumbs = cards.map(it => it.thumb || null);
+  doc.autoTable({
+    startY: 142, margin: { left: 36, right: 36 },
+    head: [["", "Card", "Set / No.", "Rarity · Variant", "Cond.", "C / E / S / Ctr", "Grade", "Qty", "Each", "Total", "Paid", "Gain", "Source"]],
+    body: cards.map(it => {
+      const u = unitUSD(it), q = it.qty || 1, c = it.cond;
+      return ["", txt(it.name), txt(`${it.setName || ""}\n#${it.number || "?"}${it.printedTotal ? "/" + it.printedTotal : ""}`), txt(`${it.rarity || ""}\n${VARIANT_LABEL[it.variant] || it.variant || ""}${(it.tags || []).includes("alt") ? " · Alt art" : ""}${(it.tags || []).includes("secret") ? " · Secret" : ""}`),
+        c ? Grader.condition(c.overall) + " ~" + c.overall : "", c ? `${c.corners} / ${c.edges} / ${c.surface} / ${c.centering}\n${c.lr}/${100 - c.lr} LR · ${c.tb}/${100 - c.tb} TB` : "",
+        it.grade && it.grade.co !== "RAW" ? `${it.grade.co} ${it.grade.g}` : "Raw", q, m(u), m(u * q), it.paid ? m(it.paid * q) : "", it.paid ? txt(money((u - it.paid) * q, { sign: true })) : "",
+        it.manualValue ? "Manual" : it.prices?.src === "ai" ? "AI est." : "Live " + (it.prices?.t ? new Date(it.prices.t).toISOString().slice(5, 10) : "")];
+    }),
+    styles: { fontSize: 7.6, cellPadding: 4, valign: "middle", textColor: [21, 23, 58], lineColor: [225, 228, 245], lineWidth: .5 },
+    headStyles: { fillColor: [232, 236, 252], textColor: [74, 79, 120], fontStyle: "bold" },
+    alternateRowStyles: { fillColor: [248, 249, 255] },
+    columnStyles: { 0: { cellWidth: 30, minCellHeight: 40 }, 1: { cellWidth: 104, fontStyle: "bold" }, 7: { halign: "right" }, 8: { halign: "right" }, 9: { halign: "right", fontStyle: "bold" }, 10: { halign: "right" }, 11: { halign: "right" } },
+    didDrawCell: d => { if (d.section === "body" && d.column.index === 0 && thumbs[d.row.index]) { try { doc.addImage(thumbs[d.row.index], "JPEG", d.cell.x + 3, d.cell.y + 3, 24, 34); } catch { /* bad image */ } } },
+    didParseCell: d => { if (d.section === "body" && d.column.index === 11 && String(d.cell.raw).startsWith("-")) d.cell.styles.textColor = [217, 45, 76]; if (d.section === "body" && d.column.index === 11 && String(d.cell.raw).startsWith("+")) d.cell.styles.textColor = [14, 159, 110]; }
+  });
+  const sealed = S.items.filter(i => i.kind === "sealed");
+  if (sealed.length) {
+    doc.autoTable({ startY: doc.lastAutoTable.finalY + 20, margin: { left: 36, right: 36 }, head: [["Sealed product", "Type", "Set", "Qty", "Paid each", "Value each", "Total", "Gain"]],
+      body: sealed.map(it => [txt(it.name), it.ptype, txt(it.setName || ""), it.qty, m(it.paid), m(it.value), m(it.value * it.qty), txt(money((it.value - it.paid) * it.qty, { sign: true }))]),
+      styles: { fontSize: 8.5, textColor: [21, 23, 58] }, headStyles: { fillColor: [255, 240, 214], textColor: [120, 80, 0] } });
+  }
+  const setRows = [];
+  const owned = new Map(); for (const it of cards) if (it.setId) { if (!owned.has(it.setId)) owned.set(it.setId, { n: it.setName, s: new Set(), tot: it.setTotal || it.printedTotal, pt: it.printedTotal }); owned.get(it.setId).s.add(String(it.number)); }
+  for (const s of S.sets) if (!owned.has(s.id)) owned.set(s.id, { n: s.name, s: new Set(), tot: s.total, pt: s.printedTotal });
+  for (const [, o] of owned) setRows.push([txt(o.n || ""), o.s.size, o.tot || "?", o.tot ? Math.round(o.s.size / o.tot * 100) + "%" : "—"]);
+  if (setRows.length) doc.autoTable({ startY: doc.lastAutoTable.finalY + 20, margin: { left: 36, right: 36 }, head: [["Master set", "Owned", "Total", "Complete"]], body: setRows, styles: { fontSize: 8.5, textColor: [21, 23, 58] }, headStyles: { fillColor: [214, 236, 255], textColor: [20, 80, 150] } });
+  if (S.alerts.length) doc.autoTable({ startY: doc.lastAutoTable.finalY + 20, margin: { left: 36, right: 36 }, head: [["Price alert", "Condition", "Target", "Now", "Active"]],
+    body: S.alerts.map(a => { const it = S.items.find(i => i.id === a.itemId); return [txt(a.name), a.dir === "above" ? "Rises to" : "Falls to", m(a.target), it ? m(unitUSD(it)) : "—", a.active ? "Yes" : "No"]; }), styles: { fontSize: 8.5, textColor: [21, 23, 58] }, headStyles: { fillColor: [252, 226, 240], textColor: [150, 30, 100] } });
+  const pages = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) { doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(122, 127, 166);
+    doc.text("Prices: TCGplayer & Cardmarket via pokemontcg.io (daily). Graded values and AI prices are estimates. Condition scores are image-based pre-grades, not official grades.", 36, doc.internal.pageSize.getHeight() - 18);
+    doc.text(`Page ${i} of ${pages}`, W - 36, doc.internal.pageSize.getHeight() - 18, { align: "right" }); }
+  await saveFile(`pkmon-vault-${today()}.pdf`, doc.output("blob"), "application/pdf");
+}
+
+/* ---------- Share binder ---------- */
+async function packBinder() {
+  const cards = S.items.filter(i => i.kind === "card").map(i => [i.cardId || "", i.qty || 1, i.variant || "", i.grade && i.grade.co !== "RAW" ? i.grade.co + i.grade.g : "", i.cardId ? "" : i.name]);
+  const json = JSON.stringify({ n: S.settings.binderName || "My binder", c: cards, cur: S.settings.cur });
+  const bytes = new TextEncoder().encode(json);
+  let packed = bytes, z = "j";
+  if ("CompressionStream" in window) { packed = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream("deflate-raw"))).arrayBuffer()); z = "z"; }
+  let s = ""; for (let i = 0; i < packed.length; i += 8192) s += String.fromCharCode(...packed.subarray(i, i + 8192));
+  return z + btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+async function unpackBinder(code) {
+  const z = code[0], b = atob(code.slice(1).replace(/-/g, "+").replace(/_/g, "/"));
+  let bytes = Uint8Array.from(b, c => c.charCodeAt(0));
+  if (z === "z") bytes = new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).arrayBuffer());
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+async function shareBinder() {
+  const cards = S.items.filter(i => i.kind === "card");
+  if (!cards.length) { toast("Add cards before sharing a binder.", "bad"); return; }
+  const base = !ENV.claude && /^https?:/.test(location.protocol) && !/^(localhost|127\.)/.test(location.hostname) ? location.origin + location.pathname : PUBLIC_URL;
+  const url = base + "#b=" + await packBinder();
+  const nameInp = h("input", { class: "inp", id: "bName", value: S.settings.binderName || "My binder", "aria-label": "Binder title" });
+  const out = h("input", { class: "inp num", id: "bUrl", readonly: true, value: url, "aria-label": "Binder link" });
+  openSheet(h("div", { class: "stack" }, h("h2", {}, "Share your binder"),
+    h("p", { class: "small muted", style: "margin:0" }, `A read-only page with ${cards.length} cards, live prices and holo previews. The link carries the card list itself; there's no account or server. Paid prices and notes are left out.`),
+    fld("Binder title", nameInp), out,
+    h("div", { class: "row" },
+      h("button", { class: "btn primary", onclick: async () => { S.settings.binderName = nameInp.value.trim() || "My binder"; Store.saveMeta(); out.value = base + "#b=" + await packBinder(); copyText(out.value); } }, "Copy link"),
+      !ENV.claude && navigator.share ? h("button", { class: "btn", onclick: async () => { S.settings.binderName = nameInp.value.trim() || "My binder"; out.value = base + "#b=" + await packBinder(); navigator.share({ title: S.settings.binderName, text: "My Pokémon card binder", url: out.value }).catch(() => {}); }, html: ICON.share + "Share" }) : null,
+      h("a", { class: "btn ghost", href: url, target: "_blank", rel: "noopener" }, "Preview ↗")),
+    url.length > 6000 ? h("p", { class: "small", style: "color:var(--warn);margin:0" }, "Large binder: some apps shorten long links. Use Copy link and paste it in full.") : null));
+}
+async function renderBinder(code) {
+  $(".nav").hidden = true;
+  const m = $("#main"); m.innerHTML = "";
+  const v = h("section", { class: "view" }); m.append(v);
+  let data; try { data = await unpackBinder(code); } catch { v.append(h("div", { class: "glass panel empty" }, h("h3", {}, "This binder link is damaged"), "Ask the owner to copy the link again.")); return; }
+  if (data.cur && CURRENCIES[data.cur] && !LS.get("settings", null)) S.settings.cur = data.cur;
+  v.append(h("div", { class: "row between" }, h("div", {}, h("div", { class: "eyebrow" }, "Shared binder"), h("h1", {}, data.n || "Binder")),
+    h("a", { class: "btn primary", href: location.pathname }, "Start your own vault")));
+  const grid = h("div", { class: "binder" }, h("div", { class: "small muted" }, h("span", { class: "spin" }), " Loading cards…"));
+  const sum = h("div", { class: "kpis" }); v.append(sum, h("div", { class: "glass panel" }, grid));
+  const ids = data.c.map(c => c[0]).filter(Boolean);
+  let map = new Map();
+  try { map = new Map((await cardsByIds(ids)).map(c => [c.id, c])); } catch (e) { toast(e.message, "bad"); }
+  grid.innerHTML = ""; let total = 0, n = 0;
+  for (const [id, q, variant, grade, name] of data.c) {
+    const card = map.get(id); const it = card ? itemFromCard(card, { variant }) : { name: name || id, kind: "card", qty: q, prices: null, tags: [] };
+    it.qty = q; if (grade) { const mm = grade.match(/^([A-Z]+)([\d.]+)$/); if (mm) it.grade = { co: mm[1], g: +mm[2] }; }
+    const u = unitUSD(it); total += u * q; n += q;
+    grid.append(h("figure", {}, h("div", { class: "holo" }, cardImg(it, true)), h("figcaption", {}, h("b", {}, it.name + (q > 1 ? ` ×${q}` : "")), h("span", { class: "num" }, money(u))),
+      h("div", { class: "row", style: "gap:4px" }, ...chipsFor(it))));
+  }
+  sum.append(kpi("Binder value", money(total), "TCGplayer market, live"), kpi("Cards", String(n), `${data.c.length} unique`));
+}
+
+/* ---------- Settings ---------- */
+function viewSettings() {
+  const env = ENV.claude ? "Claude mode" : ENV.online ? "Live web mode" : "Offline";
+  return h("section", { class: "view" },
+    h("div", {}, h("div", { class: "eyebrow" }, "Settings"), h("h1", {}, "Preferences & data")),
+    h("div", { class: "grid2" },
+      h("div", { class: "glass panel stack" }, h("h2", {}, "Display"),
+        setRow("Theme", h("div", { class: "seg" }, ...[["system", "Auto"], ["light", "Light"], ["dark", "Dark"]].map(([k, l]) => h("button", { "aria-pressed": S.settings.theme === k ? "true" : "false", onclick: () => { applyTheme(k); render(); } }, l)))),
+        setRow("Currency", curSelect("setCur")),
+        setRow("Price basis", h("div", { class: "seg" }, ...[["tcg", "TCGplayer"], ["cm", "Cardmarket"]].map(([k, l]) => h("button", { "aria-pressed": S.settings.src === k ? "true" : "false", onclick: () => { S.settings.src = k; Store.saveMeta(); render(); } }, l)))),
+        setRow("Scan sound & vibration", h("span", { class: "switch" }, h("input", { type: "checkbox", id: "sndSw", checked: S.settings.sound, onchange: e => { S.settings.sound = e.target.checked; Store.saveMeta(); } }), h("span", {}))),
+        h("div", { class: "small muted" }, S.rates ? `Exchange rates: ${S.rates.src}, ${new Date(S.rates.t).toLocaleString()}` : "Exchange rates: built-in reference rates (live rates load on the web version).")),
+      h("div", { class: "glass panel stack" }, h("h2", {}, "Where this runs"),
+        h("div", { class: "row" }, h("span", { class: "mode" + (ENV.online || ENV.claude ? "" : " off") }, h("b", {}), env)),
+        h("table", { class: "t" }, h("tbody", {},
+          capRow("Live prices (TCGplayer, Cardmarket)", ENV.online), capRow("Live camera & stack scanning", !ENV.claude && ENV.camera), capRow("Name/number OCR", ENV.online && !ENV.claude),
+          capRow("Claude vision card ID", !!(ENV.cap.sample && ENV.aiImages)), capRow("Cloud-saved collection", !!userRoot()), capRow("Live exchange rates", !!(S.rates && S.rates.src)))),
+        h("p", { class: "small muted", style: "margin:0" }, ENV.claude ? "Inside Claude the page can't reach the internet, so prices come from your last web sync or Claude's estimate. Open the web version for live prices, then move your vault across with Backup and Restore." : "Inside Claude you also get Claude vision card ID and a cloud-saved vault."),
+        h("a", { class: "btn sm", href: PUBLIC_URL, target: "_blank", rel: "noopener" }, "Open the web version ↗"))),
+    h("div", { class: "grid2" },
+      h("div", { class: "glass panel stack" }, h("h2", {}, "Card database key"),
+        h("p", { class: "small muted", style: "margin:0" }, "Optional. Without a key, pokemontcg.io allows about 1,000 lookups a day. A free key from dev.pokemontcg.io raises that to 20,000. It's stored only in this browser."),
+        h("div", { class: "row", style: "flex-wrap:nowrap" }, h("input", { class: "inp num", id: "apiKey", type: "password", value: S.settings.apiKey, placeholder: "Paste API key", "aria-label": "API key" }),
+          h("button", { class: "btn", onclick: () => { S.settings.apiKey = $("#apiKey").value.trim(); LS.set("settings", S.settings); toast(S.settings.apiKey ? "Key saved" : "Key removed"); } }, "Save"))),
+      h("div", { class: "glass panel stack" }, h("h2", {}, "Your data"),
+        h("div", { class: "small muted" }, `${S.items.length} items · ${S.alerts.length} alerts · ${S.history.length} daily snapshots`),
+        h("div", { class: "row" },
+          h("button", { class: "btn", onclick: openExport, html: ICON.dl + "Export / backup" }),
+          h("button", { class: "btn", onclick: () => $("#restoreIn").click() }, "Restore backup"),
+          ENV.online ? h("button", { class: "btn", onclick: () => refreshPrices() , html: ICON.refresh + "Update prices" }) : null),
+        h("div", { id: "wipeZone" }, h("button", { class: "btn ghost", style: "color:var(--bad)", onclick: confirmWipe }, "Delete all data…")))),
+    h("p", { class: "small muted", style: "text-align:center" }, "Card data and prices: pokemontcg.io (TCGplayer, Cardmarket). Not affiliated with Nintendo, The Pokémon Company, TCGplayer, eBay or Cardmarket."));
+}
+const setRow = (l, c) => h("div", { class: "row between" }, h("span", { style: "font-weight:600" }, l), c);
+const capRow = (l, ok) => h("tr", {}, h("td", {}, l), h("td", { class: "n " + (ok ? "up" : "muted") }, ok ? "On" : "Not here"));
+function confirmWipe() {
+  const z = $("#wipeZone"); z.innerHTML = "";
+  z.append(h("div", { class: "mk stack" }, h("b", {}, `Delete ${S.items.length} items, alerts and history from this device${userRoot() ? " and your Claude cloud copy" : ""}? This can't be undone.`),
+    h("div", { class: "row" }, h("button", { class: "btn", style: "background:var(--bad);color:#fff;border-color:transparent", onclick: () => {
+      for (const it of [...S.items]) Store.removeItem(it.id);
+      for (const a of [...S.alerts]) Store.removeAlert(a.id);
+      S.items = []; S.alerts = []; S.sets = []; S.history = []; S.stackSession = [];
+      LS.set("items", []); LS.set("alerts", []); Store.saveMeta(); render(); toast("All data deleted");
+    } }, "Delete everything"), h("button", { class: "btn ghost", onclick: () => render() }, "Keep my data"))));
+}
+async function restoreFrom(file) {
+  try {
+    const d = JSON.parse(await file.text());
+    if (d.app !== "PKmon" || !Array.isArray(d.items)) throw new Error("not a PKmon backup");
+    const have = new Set(S.items.map(i => i.id)); let n = 0;
+    for (const it of d.items) if (!have.has(it.id)) { S.items.push(it); Store.saveItem(it); n++; }
+    for (const a of d.alerts || []) if (!S.alerts.some(x => x.id === a.id)) { S.alerts.push(a); Store.saveAlert(a); }
+    for (const s of d.sets || []) if (!S.sets.some(x => x.id === s.id)) S.sets.push(s);
+    const hm = new Map(S.history.map(x => [x.d, x])); for (const x of d.history || []) if (!hm.has(x.d)) hm.set(x.d, x);
+    S.history = [...hm.values()].sort((a, b) => a.d.localeCompare(b.d));
+    Store.saveMeta(); render(); toast(`Restored ${n} new items`);
+    if (ENV.online) refreshPrices({ quiet: true }).then(render);
+  } catch (e) { toast("Couldn't restore: " + e.message, "bad"); }
+}
+
+/* ---------- theme, currency, holo tilt ---------- */
+function applyTheme(t) {
+  S.settings.theme = t; Store.saveMeta();
+  if (t === "system") document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", t);
+  const dark = t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
+  $("#themeBtn").innerHTML = t === "system" ? ICON.auto : dark ? ICON.moon : ICON.sun;
+  $("#themeBtn").title = "Theme: " + (t === "system" ? "auto" : t);
+  $('meta[name="theme-color"]').setAttribute("content", dark ? "#080A16" : "#EDEFFA");
+}
+function curSelect(id) {
+  const s = h("select", { class: "sel", id, "aria-label": "Display currency", onchange: e => { S.settings.cur = e.target.value; Store.saveMeta(); $("#curSel").value = S.settings.cur; render(); } },
+    ...Object.entries(CURRENCIES).map(([k, [n]]) => h("option", { value: k, selected: S.settings.cur === k }, `${k} · ${n}`)));
+  return s;
+}
+document.addEventListener("pointermove", e => {
+  const el = e.target.closest && e.target.closest(".holo"); if (!el) return;
+  const r = el.getBoundingClientRect(), x = (e.clientX - r.left) / r.width, y = (e.clientY - r.top) / r.height;
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  el.style.setProperty("--ry", ((x - .5) * 16).toFixed(2) + "deg"); el.style.setProperty("--rx", ((.5 - y) * 16).toFixed(2) + "deg");
+  el.style.setProperty("--mx", (x * 100).toFixed(1) + "%"); el.style.setProperty("--my", (y * 100).toFixed(1) + "%");
+});
+document.addEventListener("pointerout", e => { const el = e.target.closest && e.target.closest(".holo"); if (el && !el.contains(e.relatedTarget)) { el.style.setProperty("--rx", "0deg"); el.style.setProperty("--ry", "0deg"); } });
+
+/* ---------- boot ---------- */
+function setModeChip() {
+  const c = $("#modeChip"); c.classList.toggle("off", !(ENV.online || ENV.claude));
+  c.querySelector("span").textContent = ENV.claude ? (ENV.online ? "Claude · live" : "Claude mode") : ENV.online ? "Live" : "Offline";
+  c.title = ENV.claude ? "Running inside Claude: AI card ID and cloud vault" : ENV.online ? "Connected: live prices and card lookup" : "Offline: showing saved prices";
+}
+async function boot() {
+  applyTheme(S.settings.theme);
+  const cs = $("#curSel"); for (const k of Object.keys(CURRENCIES)) cs.append(h("option", { value: k, selected: S.settings.cur === k }, k));
+  cs.onchange = e => { S.settings.cur = e.target.value; Store.saveMeta(); render(); };
+  $("#themeBtn").onclick = () => applyTheme({ system: "light", light: "dark", dark: "system" }[S.settings.theme]);
+  $$(".nav button").forEach(b => b.onclick = () => setView(b.dataset.v));
+  $("#fileIn").onchange = e => { const f = e.target.files; if (S.view !== "scan") setView("scan"); setTimeout(() => Scan.fromFiles(f).finally(() => { e.target.value = ""; renderScanCtrls(); }), 30); };
+  $("#restoreIn").onchange = e => { if (e.target.files[0]) restoreFrom(e.target.files[0]); e.target.value = ""; };
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(S.settings.theme));
+  setModeChip();
+
+  const hm = location.hash.match(/^#b=([jz][A-Za-z0-9_-]+)$/);
+  if (hm && !ENV.claude) { ENV.online = await probeOnline(); setModeChip(); renderBinder(hm[1]); loadRates(); return; }
+
+  // first paint: Portfolio if the vault has cards, else Scanner
+  setView(S.items.length ? "port" : "scan");
+
+  if (ENV.claude) {
+    const [db, sample, downloads, user] = await Promise.all(["db", "sample", "downloads", "user"].map(n => window.claude.use(n).catch(() => null)));
+    ENV.cap = { db, sample, downloads, user };
+    if (user) ENV.uid = await user.id().catch(() => null);
+    if (sample) { const lim = await sample.limits().catch(() => null); ENV.aiImages = !!(lim && lim.images); }
+    if (db && ENV.uid) { const ok = await Store.loadCloud(); if (ok) render(); }
+  }
+  ENV.online = await probeOnline(); setModeChip();
+  if (ENV.online) {
+    await loadRates();
+    await refreshPrices({ quiet: true });
+    render();
+    setInterval(() => refreshPrices({ quiet: true }).then(() => S.view === "port" && render()), 30 * 60e3);
+  } else checkAlerts();
+  snapshotHistory();
+
+  // PWA on the web version
+  if (!ENV.claude && location.protocol === "https:") {
+    if (!$('link[rel="manifest"]')) document.head.append(h("link", { rel: "manifest", href: "pkmon.webmanifest" }));
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("pkmon-sw.js").catch(() => {});
+  }
+}
+boot();
+</script>
