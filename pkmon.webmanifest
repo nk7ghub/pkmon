@@ -1,11 +1,24 @@
 {
+  "id": "./",
   "name": "PKmon Card Vault",
   "short_name": "PKmon",
   "description": "Scan, grade, price and track a Pokémon TCG collection.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
+  "display_override": ["standalone", "minimal-ui"],
+  "orientation": "portrait",
   "background_color": "#080A16",
   "theme_color": "#080A16",
-  "icons": [{ "src": "pkmon-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+  "categories": ["utilities", "finance", "entertainment"],
+  "icons": [
+    { "src": "pkmon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "pkmon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "pkmon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "pkmon-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ],
+  "shortcuts": [
+    { "name": "Scan cards", "url": "./#scan", "icons": [{ "src": "pkmon-192.png", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "Portfolio", "url": "./#port", "icons": [{ "src": "pkmon-192.png", "sizes": "192x192", "type": "image/png" }] }
+  ]
 }

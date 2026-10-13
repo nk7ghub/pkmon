@@ -74,6 +74,12 @@ To move a vault between modes: Export → Full backup (JSON), then Settings → 
   - Tested with real Tesseract on the user's photos against a 1,201-card decoy index with pokemontcg.io down: Pikachu V 157/172 sure (129), Rayquaza VMAX TG20 sure (120), Octillery TG03 sure (76); Acerola TG24 and Gloria put the right card first in the grid.
   - Not done: full perspective (keystone) correction. The edge finder plus 63:88 shape rule covered the test photos.
 
+- 2026-10-13 (stack + install):
+  - **Multi-card photos:** `splitCards()` now finds the background gaps between cards from a per-column texture profile, cuts any part wider than ~1.5 cards at its plainest column, and falls back to equal strips. Verified on the user's 3-card photo, a 2-card crop, uneven gaps and a 4-card mix.
+  - **Batch review:** `identify(..., batch)` returns its result; `fromFiles` collects them into a `state: "batch"` view with one row per card and a pick grid per unsure card. Stack mode now also adds unsure cards as the best guess with `item.check = true` (a "Check" chip); picking from the grid replaces it, and saving the detail page clears the flag.
+  - **Live-site bugs:** `[hidden]` rule added to our own CSS (the artifact frame supplied it, GitHub Pages didn't, so the "pick photos" overlay never hid). `index.html` now starts with doctype, `meta charset` and a `viewport` meta; without viewport the Pages site rendered at desktop width on phones. The artifact is published from a copy without those three lines.
+  - **Install:** PNG icons (192, 512, maskable 512, apple-touch 180), a full manifest (`id`, `scope`, `display_override`, `shortcuts` to `#scan`/`#port`), SW shell v3. `Install` object: `beforeinstallprompt` one-tap on Chrome/Edge/Android; Safari Share → Add to Home Screen steps on iPhone/iPad; inside Claude it opens `PUBLIC_URL#install`. The header button hides when running standalone. Chrome's own installability check reports no errors.
+
 ## Tested (headless Chromium, recorded API responses)
 - No JS errors; no sideways scroll at 400 px or 1280 px; light and dark themes.
 - Search → add → portfolio KPIs, INR conversion, detail page, raw/graded table, alert, sealed add, master-set %, CSV (29 columns), PDF (26 KB), text list, trade verdict, binder link round-trip.

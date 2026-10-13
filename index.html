@@ -1,3 +1,6 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>PKmon Card Vault</title>
 <meta name="theme-color" content="#0B0E1C">
 <meta name="description" content="Scan, grade, price and track a Pokémon TCG collection.">
@@ -34,6 +37,7 @@
   --good:#34D399; --bad:#FB6B85; --warn:#FFB547;
   --b1:#8E1E63; --b2:#0A5F8E; --b3:#76580C; --b4:#11603B; color-scheme:dark}
 *{box-sizing:border-box}
+[hidden]{display:none!important}   /* the artifact frame adds this; GitHub Pages does not */
 html,body{height:100%}
 body{background:var(--bg);color:var(--ink);font-family:var(--font-b);font-size:15px;line-height:1.45;overflow-x:hidden;-webkit-tap-highlight-color:transparent}
 button,input,select,textarea{font:inherit;color:inherit}
@@ -256,6 +260,7 @@ table.t td.n,table.t th.n{text-align:right;font-family:var(--font-m);font-varian
 .pickgrid .you img{outline:2px dashed var(--water);outline-offset:2px}
 .pick{border:1px solid var(--edge);background:var(--glass-lo);border-radius:12px;padding:6px;display:grid;gap:3px;cursor:pointer;color:inherit;text-align:left;transition:transform .15s,border-color .2s}
 .pick:hover,.pick:focus-visible{transform:translateY(-2px);border-color:var(--water)}
+.pick.cur{border-color:var(--warn)}
 .pick .pn{font-weight:700;font-size:12px;line-height:1.2}
 .pick .ps{font-size:10.5px;color:var(--ink-2);line-height:1.2}
 .vh{position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;overflow:hidden;clip-path:inset(50%);pointer-events:none}
@@ -276,6 +281,7 @@ body.dropping .stage{outline:3px dashed var(--water);outline-offset:4px}
     <span class="mode" id="modeChip"><b></b><span>Starting…</span></span>
     <span class="sp"></span>
     <select class="sel" id="curSel" aria-label="Display currency"></select>
+    <button class="icon-btn" id="installBtn" aria-label="Install app" title="Install app" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5"/><rect x="4" y="17" width="16" height="4" rx="1.5"/></svg></button>
     <button class="icon-btn" id="themeBtn" aria-label="Switch theme" title="Switch theme"></button>
   </header>
   <main id="main"></main>
@@ -949,7 +955,8 @@ const Scan = {
       if (parts.length > 1) toast(`Found ${parts.length} cards in one photo`);
       list.push(...parts);
     }
-    let done = 0, failed = 0;
+    let done = 0, failed = 0; const results = [];
+    if (list.length > 1) setResult({ state: "batch", results, total: list.length });
     for (const bmp of list) {
       setPhotoProgress(done, list.length);
       try {
@@ -973,7 +980,8 @@ const Scan = {
       const ov = $("#overlay"); const r = ov.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
       ov.width = r.width * dpr; ov.height = r.height * dpr; const ctx = ov.getContext("2d"); ctx.clearRect(0, 0, ov.width, ov.height);
       drawOverlay(ctx, this.guide(ov.width, ov.height), gr, dpr);
-      await this.identify(shot, gr, { kind: "unknown", p: 0 }, list.length > 1, hi);
+      const one = await this.identify(shot, gr, { kind: "unknown", p: 0 }, list.length > 1, hi, list.length > 1);
+      if (list.length > 1) { results.push(one); setResult({ state: "batch", results, total: list.length }); }
       } catch (e) { failed++; console.warn("photo scan", e); toast("Scan failed: " + (e && e.message || e), "bad"); }
       done++;
     }
@@ -1010,10 +1018,10 @@ const Scan = {
     const raw = text.replace(/\s+/g, " ").trim();
     return { name, number: num && num.number, total: num && num.total, nums: numberCandidates(text), hp: hpM ? +hpM[1] : null, top: nameT, full: text, text: text.toLowerCase(), raw };
   },
-  async identify(shot, gr, foil, auto, hi) {
+  async identify(shot, gr, foil, auto, hi, batch = false) {
     const thumb = (() => { const t = document.createElement("canvas"); t.width = 126; t.height = 176; t.getContext("2d").drawImage(shot, 0, 0, 126, 176); return t.toDataURL("image/jpeg", .72); })();
     const cond = { corners: +gr.corners.toFixed(1), edges: +gr.edges.toFixed(1), surface: +gr.surface.toFixed(1), centering: +gr.centering.toFixed(1), overall: Math.round(gr.overall * 2) / 2, lr: Math.round(gr.lr), tb: Math.round(gr.tb), by: "pixels" };
-    setResult({ state: "working", thumb, cond });
+    if (batch) setScanStepBatch(); else setResult({ state: "working", thumb, cond });
     let found = null, candidates = [], ai = null, note = "", confident = null;
     try {
       if (ENV.cap.sample && ENV.aiImages) {
@@ -1070,13 +1078,17 @@ const Scan = {
     if (item && ai) { item.ai = { variantNote: ai.variantNote, gradeNote: ai.gradeNote, estGrade: ai.estGrade }; if (ai.estUSD && !item.prices?.tcg) item.aiEstUSD = ai.estUSD; }
     if (item) item.cond.foil = foil.kind !== "unknown" ? foil.kind : (ai && ai.foil) || null;
     if (confident === null) confident = candidates.length === 1 || !!ai;
-    setResult({ state: item ? "found" : "miss", item, topCard: found, candidates: candidates.slice(1, 8), thumb, cond, note, confident });
-    if (!item && this.lastOCR && this.lastOCR.name) { const sb = $("#scanSearch"); if (sb) { sb.value = this.lastOCR.name + (this.lastOCR.number ? " " + this.lastOCR.number : ""); sb.dispatchEvent(new Event("input")); } }
-    if (item && confident && (auto || S.settings.stack)) {
-      if (this.stream && this.lastAddedId === (item.cardId || item.name) && Date.now() - this.lastAddedAt < 6000) return; // live-camera double-capture guard only
+    const res = { state: item ? "found" : "miss", item, topCard: found, candidates: candidates.slice(1, 8), thumb, cond, note, confident, added: false };
+    if (!batch) setResult(res);
+    if (!batch && !item && this.lastOCR && this.lastOCR.name) { const sb = $("#scanSearch"); if (sb) { sb.value = this.lastOCR.name + (this.lastOCR.number ? " " + this.lastOCR.number : ""); sb.dispatchEvent(new Event("input")); } }
+    // stack mode adds every recognised card; an unsure one goes in as the best guess, flagged "Check"
+    if (item && (confident || S.settings.stack) && (auto || S.settings.stack)) {
+      if (this.stream && this.lastAddedId === (item.cardId || item.name) && Date.now() - this.lastAddedAt < 6000) return res; // live-camera double-capture guard only
+      if (!confident) item.check = true;
       addItem(item, { quiet: true }); S.stackSession.unshift(item); this.lastAddedId = item.cardId || item.name; this.lastAddedAt = Date.now();
-      beep(); renderTray();
+      res.added = true; beep(); renderTray();
     }
+    return res;
   }
 };
 
@@ -1160,11 +1172,36 @@ async function detailsFor(entries) {
 }
 /* several cards side by side (or stacked) in one photo → one crop per card */
 async function splitCards(bmp) {
-  const ar = bmp.width / bmp.height, parts = [];
-  if (ar > 1.15) { const n = clamp(Math.round(ar / .8), 2, 6), w = bmp.width / n; for (let i = 0; i < n; i++) parts.push([i * w, 0, w, bmp.height]); }
-  else if (ar < .5) { const n = clamp(Math.round((1 / ar) / 1.3), 2, 4), hh = bmp.height / n; for (let i = 0; i < n; i++) parts.push([0, i * hh, bmp.width, hh]); }
-  if (!parts.length) return [bmp];
-  return Promise.all(parts.map(([x, y, w, hh]) => { const c = document.createElement("canvas"); c.width = Math.round(w); c.height = Math.round(hh); c.getContext("2d").drawImage(bmp, x, y, w, hh, 0, 0, c.width, c.height); return c; }));
+  const ar = bmp.width / bmp.height;
+  const horiz = ar > 1.15, vert = ar < .55;
+  if (!horiz && !vert) return [bmp];
+  // look for the background gaps between cards: columns (or rows) with almost no texture
+  const sc = 600 / Math.max(bmp.width, bmp.height), W = Math.max(2, Math.round(bmp.width * sc)), H = Math.max(2, Math.round(bmp.height * sc));
+  const c0 = document.createElement("canvas"); c0.width = W; c0.height = H; const x0 = c0.getContext("2d", { willReadFrequently: true });
+  x0.drawImage(bmp, 0, 0, W, H); const d = x0.getImageData(0, 0, W, H).data;
+  const L = (x, y) => { const p = (y * W + x) * 4; return .299 * d[p] + .587 * d[p + 1] + .114 * d[p + 2]; };
+  const N = horiz ? W : H, M = horiz ? H : W, prof = new Float32Array(N);
+  for (let i = 0; i < N; i++) { let s1 = 0, s2 = 0, n = 0; for (let j = Math.round(M * .1); j < M * .9; j += 2) { const v = horiz ? L(i, j) : L(j, i); s1 += v; s2 += v * v; n++; } prof[i] = Math.sqrt(Math.max(0, s2 / n - (s1 / n) ** 2)); }
+  const sorted = [...prof].sort((a, b) => a - b), hi = sorted[Math.floor(N * .8)], thr = Math.max(6, hi * .22);
+  // segments of textured columns = cards
+  const segs = []; let st = -1;
+  for (let i = 0; i <= N; i++) { const on = i < N && prof[i] > thr; if (on && st < 0) st = i; if (!on && st >= 0) { segs.push([st, i]); st = -1; } }
+  const minLen = (horiz ? H * .716 : W / .716) * .45;
+  // merge tiny breaks inside a card, then keep card-sized segments
+  const merged = []; for (const g of segs) { const last = merged[merged.length - 1]; if (last && g[0] - last[1] < N * .012) last[1] = g[1]; else merged.push([...g]); }
+  let cards = merged.filter(([a, b]) => b - a >= minLen);
+  // a part much wider than one card is two cards with a narrow gap: cut at its plainest column
+  const cardLen = minLen / .45 * .92, split = [];
+  const cut = ([a, b]) => { if (b - a < cardLen * 1.5) { split.push([a, b]); return; }
+    let bi = -1, bv = 1e9; for (let i = Math.round(a + cardLen * .6); i < b - cardLen * .6; i++) { const v = prof[i] + (prof[i - 1] || 0) + (prof[i + 1] || 0); if (v < bv) { bv = v; bi = i; } }
+    if (bi < 0) { split.push([a, b]); return; } cut([a, bi]); cut([bi + 1, b]); };
+  cards.forEach(cut); cards = split;
+  let parts;
+  if (cards.length >= 2) parts = cards.map(([a, b]) => { const pad = (b - a) * .03; return [Math.max(0, a - pad) / sc, Math.min(N, b + pad) / sc]; });
+  else { const n = clamp(Math.round(horiz ? ar / .8 : (1 / ar) / 1.3), 2, 6), len = (horiz ? bmp.width : bmp.height) / n; parts = Array.from({ length: n }, (_, i) => [i * len, (i + 1) * len]); }
+  return parts.map(([a, b]) => { const c = document.createElement("canvas");
+    const [x, y, w, hh] = horiz ? [a, 0, b - a, bmp.height] : [0, a, bmp.width, b - a];
+    c.width = Math.round(w); c.height = Math.round(hh); c.getContext("2d").drawImage(bmp, x, y, w, hh, 0, 0, c.width, c.height); return c; });
 }
 
 /* Find the card in a photo: the card outline is the longest straight, continuous edge on each side */
@@ -1229,6 +1266,7 @@ function nameInText(name, text) {
   return false;
 }
 function withTimeout(pr, ms, msg) { let t; return Promise.race([pr, new Promise((_, rej) => { t = setTimeout(() => rej(new Error(msg)), ms); })]).finally(() => clearTimeout(t)); }
+function setScanStepBatch() { /* batch view keeps its own counter */ }
 function setScanStep(msg) { const r = $("#resultBox .scanstep"); if (r) r.textContent = msg; }
 
 /* Claude vision (artifact viewer): identify + variant + grading read, strict JSON */
@@ -1424,6 +1462,7 @@ function chipsFor(it) {
   if (/holo/i.test(it.variant)) out.push(h("span", { class: "chip foil" }, VARIANT_LABEL[it.variant] || it.variant));
   if ((it.tags || []).includes("secret")) out.push(h("span", { class: "chip secret" }, "Secret rare"));
   if ((it.tags || []).includes("alt")) out.push(h("span", { class: "chip alt" }, "Alt art"));
+  if (it.check) out.push(h("span", { class: "chip", style: "color:var(--warn)", title: "Added as the best guess. Open it to confirm or change." }, "Check"));
   if (it.grade && it.grade.co && it.grade.co !== "RAW") out.push(h("span", { class: "chip" }, `${it.grade.co} ${it.grade.g}`));
   else if (it.cond) out.push(h("span", { class: "chip" }, `${Grader.condition(it.cond.overall)} · ~${it.cond.overall}`));
   return out;
@@ -1508,6 +1547,37 @@ function renderScanCtrls() {
 function setResult(r) {
   S._lastResult = r;
   const box = $("#resultBox"); if (!box) return; box.innerHTML = "";
+  if (r.state === "batch") {
+    const res = r.results, sure = res.filter(x => x.item && x.confident).length, chk = res.filter(x => x.item && !x.confident).length, miss = res.filter(x => !x.item).length;
+    const cimg = cd => { if (!(cd.images && cd.images.small)) return ph(cd); const im = h("img", { src: cd.images.small, alt: "", loading: "lazy" }); im.onerror = () => im.replaceWith(ph(cd)); return im; };
+    const choose = (x, cd) => {
+      if (x.added && x.item) { removeItem(x.item.id, true); S.stackSession = S.stackSession.filter(i => i.id !== x.item.id); }
+      const ni = itemFromCard(cd, { cond: x.cond, thumb: x.thumb });
+      addItem(ni, { quiet: true }); S.stackSession.unshift(ni);
+      x.candidates = [x.topCard, ...x.candidates].filter(c => c && c !== cd); x.item = ni; x.topCard = cd; x.confident = true; x.added = true;
+      renderTray(); beep(); setResult(r);
+    };
+    box.append(h("div", { class: "row between" }, h("h2", {}, `${r.total} card${r.total > 1 ? "s" : ""} in this scan`),
+      h("span", { class: "small muted" }, `${sure} sure · ${chk} to check · ${miss} not found${res.length < r.total ? ` · reading ${res.length + 1} of ${r.total}…` : ""}`)));
+    if (chk && S.settings.stack) box.append(h("p", { class: "small muted", style: "margin:4px 0 0" }, "Unsure cards were added as the best guess, marked Check. Tap the right card to fix one."));
+    const list = h("div", { class: "stack", style: "margin-top:10px;gap:12px" });
+    res.forEach((x, i) => {
+      const head = h("div", { class: "row", style: "gap:10px;flex-wrap:nowrap" }, h("img", { src: x.thumb, alt: "", style: "width:44px;border-radius:5px;border:1px solid var(--edge)" }),
+        h("div", { style: "min-width:0;flex:1" }, h("div", { class: "nm", style: "font-weight:700" }, x.item ? x.item.name : `Card ${i + 1}: not recognised`),
+          h("div", { class: "small muted" }, x.item ? `${x.item.setName || ""} · ${x.item.number || "?"}${x.item.printedTotal ? "/" + x.item.printedTotal : ""}` : (x.note || "Search for it by name below."))),
+        x.item ? (x.confident ? h("span", { class: "chip good" }, x.added ? "✓ Added" : "Sure") : h("span", { class: "chip", style: "color:var(--warn)" }, x.added ? "Added · Check" : "Check")) : null,
+        x.item && !x.added ? h("button", { class: "btn sm", onclick: () => { addItem(x.item, { quiet: true }); S.stackSession.unshift(x.item); x.added = true; renderTray(); setResult(r); } }, "Add") : null);
+      const row = h("div", { class: "mk", style: "padding:10px" }, head);
+      if (x.item && !x.confident) {
+        const opts = [x.topCard, ...(x.candidates || [])].filter(Boolean).slice(0, 6);
+        row.append(h("div", { class: "pickgrid", style: "margin-top:8px;grid-template-columns:repeat(auto-fill,minmax(78px,1fr))" },
+          ...opts.map(cd => h("button", { class: "pick" + (cd === x.topCard ? " cur" : ""), onclick: () => choose(x, cd) }, cimg(cd), h("span", { class: "pn" }, cd.name), h("span", { class: "ps num" }, `${cd.number}${cd.set && cd.set.printedTotal ? "/" + cd.set.printedTotal : ""}`)))));
+      }
+      list.append(row);
+    });
+    box.append(list);
+    return;
+  }
   if (r.state === "idle") {
     box.append(h("div", { class: "eyebrow" }, "Live condition grader"),
       h("p", { class: "muted small", style: "margin:.4em 0 0" }, "Centering is measured from the border widths in the frame (PSA front tolerance is 55/45 for a 10). Corners, edges and surface come from whitening, edge straightness and fine-line checks on the pixels. It's a pre-grade guide, not a slab grade."));
@@ -1941,6 +2011,7 @@ function openDetail(it) {
       it.qty = Math.max(1, +fd.get("qty") || 1); it.paid = (+fd.get("paid") || 0) / r;
       const gco = fd.get("gco"); it.grade = { co: gco, g: gco === "RAW" ? null : +fd.get("gg") };
       const mv = fd.get("mv"); it.manualValue = mv ? (+mv) / r : null; it.notes = fd.get("notes");
+      it.check = false;   // saving from the detail page confirms a best-guess card
       if (!inColl) S.items.unshift(it);
       Store.saveItem(it); snapshotHistory(); toast(inColl ? "Saved" : "Added " + it.name); closeSheet(); render();
     } },
@@ -2208,6 +2279,11 @@ function viewSettings() {
         h("p", { class: "small muted", style: "margin:0" }, ENV.claude ? "Inside Claude the page can't reach the internet, so prices come from your last web sync or Claude's estimate. Open the web version for live prices, then move your vault across with Backup and Restore." : "Inside Claude you also get Claude vision card ID and a cloud-saved vault."),
         h("a", { class: "btn sm", href: PUBLIC_URL, target: "_blank", rel: "noopener" }, "Open the web version ↗"))),
     h("div", { class: "grid2" },
+      h("div", { class: "glass panel stack" }, h("h2", {}, "Install PKmon"),
+        h("p", { class: "small muted", style: "margin:0" }, Install.isStandalone() ? "PKmon is installed and running as an app on this device."
+          : ENV.claude ? "Apps can't be installed from inside Claude. Open the web version in your browser and install it from there; it gets the live camera and live prices too."
+          : "Add PKmon to your home screen or desktop. It opens full screen like an app and works offline for your saved cards."),
+        Install.isStandalone() ? null : h("button", { class: "btn primary", onclick: () => Install.go(), html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5"/><rect x="4" y="17" width="16" height="4" rx="1.5"/></svg>' + (ENV.claude ? "Open the installable version ↗" : "Install app") })),
       h("div", { class: "glass panel stack" }, h("h2", {}, "Card database key"),
         h("p", { class: "small muted", style: "margin:0" }, "Optional. Without a key, pokemontcg.io allows about 1,000 lookups a day. A free key from dev.pokemontcg.io raises that to 20,000. It's stored only in this browser."),
         h("div", { class: "row", style: "flex-wrap:nowrap" }, h("input", { class: "inp num", id: "apiKey", type: "password", value: S.settings.apiKey, placeholder: "Paste API key", "aria-label": "API key" }),
@@ -2271,6 +2347,49 @@ document.addEventListener("pointermove", e => {
 });
 document.addEventListener("pointerout", e => { const el = e.target.closest && e.target.closest(".holo"); if (el && !el.contains(e.relatedTarget)) { el.style.setProperty("--rx", "0deg"); el.style.setProperty("--ry", "0deg"); } });
 
+/* ---------- Install (PWA) ----------
+   Chrome/Edge/Android: real one-tap prompt via beforeinstallprompt.
+   iPhone/iPad Safari: no prompt exists, so show the Share → Add to Home Screen steps.
+   Inside Claude: the artifact frame can't install anything, so open the web version. */
+const Install = {
+  evt: null,
+  isIOS: () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1),
+  isStandalone: () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true,
+  canShow() { return !this.isStandalone() && (ENV.claude || !!this.evt || this.isIOS()); },
+  refresh() { const b = $("#installBtn"); if (b) b.hidden = !this.canShow(); },
+  async go() {
+    if (ENV.claude) {
+      const link = PUBLIC_URL + "#install";
+      openSheet(h("div", { class: "stack" }, h("h2", {}, "Install PKmon"),
+        h("p", { class: "small muted", style: "margin:0" }, "Claude can't install apps from inside a chat. Open PKmon in your browser and tap Install there. Your collection here can move across with Export → Full backup, then Settings → Restore."),
+        h("div", { class: "row" }, h("a", { class: "btn primary", href: link, target: "_blank", rel: "noopener" }, "Open PKmon in browser ↗"), h("button", { class: "btn", onclick: () => copyText(PUBLIC_URL) }, "Copy link")),
+        h("input", { class: "inp num", id: "instUrl", readonly: true, value: PUBLIC_URL, "aria-label": "PKmon web address" })));
+      return;
+    }
+    if (this.evt) {
+      this.evt.prompt();
+      const { outcome } = await this.evt.userChoice.catch(() => ({ outcome: "dismissed" }));
+      this.evt = null; this.refresh();
+      if (outcome === "accepted") toast("Installing PKmon…");
+      return;
+    }
+    const ios = this.isIOS();
+    const share = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-3px"><path d="M12 3v13M7 8l5-5 5 5"/><path d="M5 12v8h14v-8"/></svg>';
+    openSheet(h("div", { class: "stack" }, h("h2", {}, "Install PKmon"),
+      ios ? h("ol", { class: "stack", style: "margin:0;padding-left:20px;gap:8px" },
+          h("li", { html: `Open this page in <b>Safari</b> (other iPhone browsers can't add apps).` }),
+          h("li", { html: `Tap the <b>Share</b> button ${share} in the toolbar.` }),
+          h("li", { html: `Scroll down and tap <b>Add to Home Screen</b>, then <b>Add</b>.` }))
+        : h("ol", { class: "stack", style: "margin:0;padding-left:20px;gap:8px" },
+          h("li", { html: `Open the browser menu (<b>⋮</b> in Chrome or Edge).` }),
+          h("li", { html: `Tap <b>Install app</b> or <b>Add to Home screen</b>.` }),
+          h("li", {}, "If neither shows, reload the page once and wait a few seconds: the browser only offers it after the page has loaded fully.")),
+      h("p", { class: "small muted", style: "margin:0" }, "Your saved cards stay; the installed app uses the same storage as this page.")));
+  }
+};
+window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); Install.evt = e; Install.refresh(); });
+window.addEventListener("appinstalled", () => { Install.evt = null; Install.refresh(); toast("PKmon installed. Find it on your home screen."); });
+
 /* ---------- boot ---------- */
 function setModeChip() {
   const c = $("#modeChip"); c.classList.toggle("off", !(ENV.online || ENV.claude));
@@ -2282,6 +2401,7 @@ async function boot() {
   const cs = $("#curSel"); for (const k of Object.keys(CURRENCIES)) cs.append(h("option", { value: k, selected: S.settings.cur === k }, k));
   cs.onchange = e => { S.settings.cur = e.target.value; Store.saveMeta(); render(); };
   $("#themeBtn").onclick = () => applyTheme({ system: "light", light: "dark", dark: "system" }[S.settings.theme]);
+  $("#installBtn").onclick = () => Install.go(); Install.refresh();
   $$(".nav button").forEach(b => b.onclick = () => setView(b.dataset.v));
   for (const id of ["fileIn", "camIn"]) $("#" + id).addEventListener("change", e => {
     const f = [...(e.target.files || [])]; e.target.value = "";
@@ -2296,8 +2416,10 @@ async function boot() {
   const hm = location.hash.match(/^#b=([jz][A-Za-z0-9_-]+)$/);
   if (hm && !ENV.claude) { ENV.online = await probeOnline(); setModeChip(); renderBinder(hm[1]); loadRates(); return; }
 
-  // first paint: Portfolio if the vault has cards, else Scanner
-  setView(S.items.length ? "port" : "scan");
+  // first paint: a #scan / #port / #trade / #set link wins, else Portfolio if the vault has cards, else Scanner
+  const hv = (location.hash.match(/^#(scan|port|trade|set|install)$/) || [])[1];
+  setView(hv && hv !== "install" ? hv : S.items.length ? "port" : "scan");
+  if (hv === "install") setTimeout(() => Install.go(), 600);
 
   if (ENV.claude) {
     const [db, sample, downloads, user] = await Promise.all(["db", "sample", "downloads", "user"].map(n => window.claude.use(n).catch(() => null)));
@@ -2317,7 +2439,8 @@ async function boot() {
   snapshotHistory();
 
   // PWA on the web version
-  if (!ENV.claude && location.protocol === "https:") {
+  if (!ENV.claude && (location.protocol === "https:" || /^(localhost|127\.0\.0\.1)$/.test(location.hostname))) {
+    if (!$('link[rel="apple-touch-icon"]')) document.head.append(h("link", { rel: "apple-touch-icon", href: "apple-touch-icon.png" }), h("meta", { name: "apple-mobile-web-app-capable", content: "yes" }), h("meta", { name: "mobile-web-app-capable", content: "yes" }), h("meta", { name: "apple-mobile-web-app-title", content: "PKmon" }));
     if (!$('link[rel="manifest"]')) document.head.append(h("link", { rel: "manifest", href: "pkmon.webmanifest" }));
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("pkmon-sw.js").catch(() => {});
   }
