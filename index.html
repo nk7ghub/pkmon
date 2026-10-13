@@ -944,7 +944,8 @@ const Scan = {
   },
   /* photos (artifact mode, or uploads on the web) */
   async fromFiles(files) {
-    const files0 = [...files].slice(0, 30); if (!files0.length) return;
+    if (files.length > MAX_PHOTOS) toast(`Scanning the first ${MAX_PHOTOS} photos. Add the rest in another batch.`, "bad");
+    const files0 = [...files].slice(0, MAX_PHOTOS); if (!files0.length) return;
     this.filesBusy = true;
     // decode every photo, then split photos that hold several cards
     const list = [];
@@ -952,7 +953,8 @@ const Scan = {
       const b = await decodeImage(f);
       if (!b) { toast(`Couldn't open ${f.name || "that photo"}. Use a JPEG or PNG photo.`, "bad"); continue; }
       const parts = await splitCards(b);
-      if (parts.length > 1) toast(`Found ${parts.length} cards in one photo`);
+      if (parts.length > MAX_PER_PHOTO) { toast(`Found ${parts.length} cards; reading the first ${MAX_PER_PHOTO}. Use up to ${MAX_PER_PHOTO} cards per photo, in one row.`, "bad"); parts.length = MAX_PER_PHOTO; }
+      else if (parts.length > 1) toast(`Found ${parts.length} cards in one photo`);
       list.push(...parts);
     }
     let done = 0, failed = 0; const results = [];
@@ -1039,11 +1041,25 @@ const Scan = {
         setScanStep("Matching against the card index…");
         const idx = await CardIndex.load().catch(() => null);
         if (idx && (o.number || o.text)) {
-          const ranked = CardIndex.rank(o).slice(0, 12);
+          // strong text read → top 12; weak read → a wider pool of 40 so the picture check can find the card
+          const strict = CardIndex.rank(o); let ranked, relaxed = false;
+          if (!strict.length) { ranked = CardIndex.rank(o, 12).slice(0, 40); relaxed = true; }
+          else if (strict[0].score < 60) ranked = CardIndex.rank(o, 12).slice(0, 40);
+          else ranked = strict.slice(0, 12);
+          // other prints with the same name (regular / full art / rainbow / gallery) so the picture check can tell them apart
+          const top3 = new Set(ranked.slice(0, 3).map(r => r.b.n));
+          for (const c of CardIndex.cards) { if (ranked.length >= 46) break; if (top3.has(c.n) && !ranked.some(r => r.b === c)) ranked.push({ b: c, score: Math.max(0, ranked.find(r => r.b.n === c.n).score - 30), why: ["same name"] }); }
           if (ranked.length) {
+            // 1) picture check on the whole pool (official images from the index)
+            setScanStep(`Comparing card pictures (${ranked.length})…`);
+            const sims = await Visual.compare(hi || shot, ranked).catch(() => null);
+            if (sims) { const ok = sims.filter(v => v != null);
+              if (ok.length >= 2) { const mn = Math.min(...ok), mx = Math.max(...ok);
+                if (mx - mn > .03) ranked.forEach((r, i) => { if (sims[i] == null) return; const b = 45 * (sims[i] - mn) / (mx - mn); r.score += b; r.vis = +sims[i].toFixed(3); if (b > 33) r.why.push("picture"); }); } }
+            ranked.sort((a, b) => b.score - a.score); ranked = ranked.slice(0, 12);
+            // 2) real card data for the best 12: HP and attack names confirm or demote each match
             setScanStep("Checking the best matches…");
             const det = await detailsFor(ranked.map(r => r.b));
-            // real card data: HP and attack names confirm or demote each match
             const txt = (o.text || "").replace(/[^a-z0-9]/g, "");
             ranked.forEach((r, i) => { const c = det[i]; r.card = c; if (!c) return;
               const digits = (o.full || "").toUpperCase().replace(/O/g, "0").replace(/[^0-9]/g, " ");
@@ -1053,7 +1069,7 @@ const Scan = {
             candidates = ranked.filter(r => r.card).map(r => r.card);
             this.lastRank = ranked;
             const gap = ranked[1] ? ranked[0].score - ranked[1].score : 99;
-            confident = (ranked[0].score >= 90 && gap >= 12) || (ranked[0].score >= 65 && gap >= 25);
+            confident = !relaxed && ((ranked[0].score >= 90 && gap >= 12) || (ranked[0].score >= 65 && gap >= 25));
           }
         }
         if (!candidates.length && ENV.ptcg !== false) {
@@ -1092,6 +1108,41 @@ const Scan = {
   }
 };
 
+/* stack limits: each card needs ~600+ px of the photo's width for its small print to be readable */
+const MAX_PER_PHOTO = 6, MAX_PHOTOS = 30;
+/* ---- Picture check: the photo vs each candidate's official image ----
+   colour layout (8×11 cells, lighting-normalised) + shape hash (16×16 gradient bits). Relative scores only. */
+const Visual = {
+  feat(src) {
+    const a = document.createElement("canvas"); a.width = 8; a.height = 11; const ax = a.getContext("2d", { willReadFrequently: true });
+    ax.drawImage(src, 0, 0, 8, 11); const cd = ax.getImageData(0, 0, 8, 11).data;
+    const m = [0, 0, 0]; for (let i = 0; i < cd.length; i += 4) { m[0] += cd[i]; m[1] += cd[i + 1]; m[2] += cd[i + 2]; }
+    const n = cd.length / 4; m.forEach((v, k) => m[k] = v / n || 1);
+    const col = []; for (let i = 0; i < cd.length; i += 4) col.push(cd[i] / m[0], cd[i + 1] / m[1], cd[i + 2] / m[2]);
+    const g = document.createElement("canvas"); g.width = 17; g.height = 16; const gx = g.getContext("2d", { willReadFrequently: true });
+    gx.filter = "grayscale(1)"; gx.drawImage(src, 0, 0, 17, 16); const gd = gx.getImageData(0, 0, 17, 16).data;
+    const bits = []; for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) bits.push(gd[(y * 17 + x) * 4] > gd[(y * 17 + x + 1) * 4] ? 1 : 0);
+    return { col, bits };
+  },
+  sim(p, q) {
+    let dc = 0; for (let i = 0; i < p.col.length; i++) dc += Math.min(1.5, Math.abs(p.col[i] - q.col[i])); dc /= p.col.length;
+    let dh = 0; for (let i = 0; i < p.bits.length; i++) if (p.bits[i] !== q.bits[i]) dh++; dh /= p.bits.length;
+    return 1 - (dc * .7 + dh * .6);
+  },
+  load(url) {
+    return new Promise(res => { if (!url) return res(null); const im = new Image(); im.crossOrigin = "anonymous"; const t = setTimeout(() => res(null), 7000);
+      im.onload = () => { clearTimeout(t); res(im); }; im.onerror = () => { clearTimeout(t); res(null); }; im.src = url; });
+  },
+  async compare(photo, ranked) {
+    if (ENV.claude || !navigator.onLine) return null;   // the artifact frame can't load outside images
+    const me = this.feat(photo);
+    return Promise.all(ranked.map(async r => {
+      const urls = [r.b.img ? r.b.img + "/low.webp" : null, r.card && r.card.images && r.card.images.small].filter(Boolean);
+      for (const u of urls) { const im = await this.load(u); if (!im) continue; try { return this.sim(me, this.feat(im)); } catch { /* image not readable (CORS); try the next */ } }
+      return null;
+    }));
+  }
+};
 /* ---- Local card index: every card's id, number and name from TCGdex, kept on the device (Cache Storage) ----
    Ranking is local, so a half-read name ("ikachuVI") or a lone number still finds the card. */
 const CardIndex = {
@@ -1121,7 +1172,7 @@ const CardIndex = {
     return this.loading;
   },
   /* score every card: number + set total + how much of the name the reader saw */
-  rank(o) {
+  rank(o, minScore = 25) {
     const top = this.norm(o.top || o.name || ""), all = this.norm(o.full || o.text || "");
     const tTop = this.tri(top), tAll = this.tri(all);
     const num = o.number ? normNum(o.number) : null, tot = o.total || null, gallery = num && /^(TG|GG|SV)/.test(num);
@@ -1147,7 +1198,7 @@ const CardIndex = {
         const sim = Math.max(hitT / c.tri.size, .75 * hitA / c.tri.size) * lenW + (top.includes(c.n) && c.n.length >= 4 ? .15 : 0);
         if (sim > .34) { s += 40 * Math.min(1, sim) + Math.min(10, hitT * .6); why.push("name"); }   // more letters seen = more evidence (breaks "Acerola" vs "Acerola's Premonition")
       }
-      if (s >= 25) out.push({ b: c, score: s, why });
+      if (s >= minScore) out.push({ b: c, score: s, why });
     }
     out.sort((a, b) => b.score - a.score || b.b.id.localeCompare(a.b.id));
     return out;
@@ -1491,6 +1542,7 @@ function viewScan() {
       h("div", {}, h("div", { class: "eyebrow" }, "Scanner"), h("h1", {}, "Scan, grade, price")),
       h("label", { class: "row small", style: "gap:8px;font-weight:700" }, "Stack mode",
         h("span", { class: "switch" }, h("input", { type: "checkbox", id: "stackSw", checked: S.settings.stack, onchange: e => { S.settings.stack = e.target.checked; Store.saveMeta(); toast(S.settings.stack ? "Stack mode on: cards add themselves as you scan" : "Stack mode off: confirm each card"); } }), h("span", {})))),
+    S.settings.stack ? h("p", { class: "small muted", style: "margin:-6px 0 0" }, `Stack mode: up to ${MAX_PER_PHOTO} cards per photo in one row (3–4 reads best) · up to ${MAX_PHOTOS} photos at once · live camera: one card at a time, no limit.`) : null,
     h("div", { class: "grid2" },
       h("div", { class: "stack" },
         h("div", { class: "stage glass" },
@@ -2355,7 +2407,7 @@ const Install = {
   evt: null,
   isIOS: () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1),
   isStandalone: () => matchMedia("(display-mode: standalone)").matches || navigator.standalone === true,
-  canShow() { return !this.isStandalone() && (ENV.claude || !!this.evt || this.isIOS()); },
+  canShow() { return !this.isStandalone(); },   // always offer it; go() explains when this browser can't install
   refresh() { const b = $("#installBtn"); if (b) b.hidden = !this.canShow(); },
   async go() {
     if (ENV.claude) {
@@ -2364,6 +2416,12 @@ const Install = {
         h("p", { class: "small muted", style: "margin:0" }, "Claude can't install apps from inside a chat. Open PKmon in your browser and tap Install there. Your collection here can move across with Export → Full backup, then Settings → Restore."),
         h("div", { class: "row" }, h("a", { class: "btn primary", href: link, target: "_blank", rel: "noopener" }, "Open PKmon in browser ↗"), h("button", { class: "btn", onclick: () => copyText(PUBLIC_URL) }, "Copy link")),
         h("input", { class: "inp num", id: "instUrl", readonly: true, value: PUBLIC_URL, "aria-label": "PKmon web address" })));
+      return;
+    }
+    if (!/^https?:$/.test(location.protocol)) {   // a downloaded copy (file:// or content://) can never be installed
+      openSheet(h("div", { class: "stack" }, h("h2", {}, "Install from the live site"),
+        h("p", { class: "small muted", style: "margin:0" }, "You're using a downloaded copy of PKmon. It can't be installed and has no live camera or prices. Open the live site, then tap Install there."),
+        h("div", { class: "row" }, h("a", { class: "btn primary", href: PUBLIC_URL + "#install", target: "_blank", rel: "noopener" }, "Open live PKmon ↗"), h("button", { class: "btn", onclick: () => copyText(PUBLIC_URL) }, "Copy link"))));
       return;
     }
     if (this.evt) {
@@ -2412,6 +2470,7 @@ async function boot() {
   $("#restoreIn").onchange = e => { if (e.target.files[0]) restoreFrom(e.target.files[0]); e.target.value = ""; };
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => applyTheme(S.settings.theme));
   setModeChip();
+  if (!ENV.claude && !/^https?:$/.test(location.protocol)) setTimeout(() => toast("You're using a downloaded copy: no live prices, camera or install. Open nk7ghub.github.io/pkmon instead.", "bad"), 1200);
 
   const hm = location.hash.match(/^#b=([jz][A-Za-z0-9_-]+)$/);
   if (hm && !ENV.claude) { ENV.online = await probeOnline(); setModeChip(); renderBinder(hm[1]); loadRates(); return; }

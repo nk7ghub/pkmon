@@ -80,6 +80,13 @@ To move a vault between modes: Export → Full backup (JSON), then Settings → 
   - **Live-site bugs:** `[hidden]` rule added to our own CSS (the artifact frame supplied it, GitHub Pages didn't, so the "pick photos" overlay never hid). `index.html` now starts with doctype, `meta charset` and a `viewport` meta; without viewport the Pages site rendered at desktop width on phones. The artifact is published from a copy without those three lines.
   - **Install:** PNG icons (192, 512, maskable 512, apple-touch 180), a full manifest (`id`, `scope`, `display_override`, `shortcuts` to `#scan`/`#port`), SW shell v3. `Install` object: `beforeinstallprompt` one-tap on Chrome/Edge/Android; Safari Share → Add to Home Screen steps on iPhone/iPad; inside Claude it opens `PUBLIC_URL#install`. The header button hides when running standalone. Chrome's own installability check reports no errors.
 
+- 2026-10-13 (picture check + install button):
+  - **`Visual`:** compares the photo with each candidate's official image (8×11 lighting-normalised colour grid plus a 16×16 gradient hash). Scores are relative within the pool, worth up to +45. Images come from the TCGdex `img` in the index (`/low.webp`), falling back to the pokemontcg image; CORS-blocked images are skipped. Skipped inside Claude (frame blocks images).
+  - **Pipeline:** strict text rank → if the top score is < 60, or nothing passed, a wider pool of 40 (min score 12), plus same-name prints (regular / full art / rainbow / gallery) → picture check → top 12 → details, HP and attack → confidence. A relaxed pool is never "sure".
+  - Fixed on the user's photo: Café Master TG25 (text read only "aster") and the two Cynthia's Ambition prints (178 rainbow vs 169 full art).
+  - **Install button:** now always visible unless running installed. Downloaded copies (`file:` / `content:`) get a sheet pointing to the live site, plus a one-time toast.
+  - **Stack limits:** `MAX_PER_PHOTO = 6` (one row; 3–4 reads best), `MAX_PHOTOS = 30` per batch; the live camera has no limit (one card at a time). Shown under the Stack mode switch.
+
 ## Tested (headless Chromium, recorded API responses)
 - No JS errors; no sideways scroll at 400 px or 1280 px; light and dark themes.
 - Search → add → portfolio KPIs, INR conversion, detail page, raw/graded table, alert, sealed add, master-set %, CSV (29 columns), PDF (26 KB), text list, trade verdict, binder link round-trip.
