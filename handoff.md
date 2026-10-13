@@ -62,6 +62,16 @@ To move a vault between modes: Export → Full backup (JSON), then Settings → 
   - On a miss, the scanner search box is filled with the OCR guess.
   - Verified with real Tesseract on the user's Rayquaza photo: read `TG20/30` and matched swsh12tg-TG20 via pokemontcg.io and via TCGdex.
 
+- 2026-10-13 Phase 1 (recognition): OCR alone was too unreliable on real cards ("ikachuVI", "#7/17"). Added:
+  - `CardIndex`: the full TCGdex card list (id, number, name, image) plus set sizes, cached 7 days in Cache Storage. `rank()` scores every card using the exact number, set size, trigram name containment, an evidence bonus and a V/VMAX/VSTAR suffix rule. `numberCandidates()` turns noisy pairs like "1157/1725" into 157/172, kept only if a real set has that size.
+  - `detailsFor()` fetches the top 12 (pokemontcg.io, else TCGdex). HP (digits found anywhere in the OCR text) gives +12; an attack or ability name in the text gives +20.
+  - "Sure" means score ≥ 90 with a lead of 12+, or ≥ 65 with a lead of 25+. Otherwise a "Which card is this?" grid (`.pickgrid`) shows the photo next to the top 8; one tap adds the card. Stack mode only auto-adds sure matches.
+  - `splitCards()`: wide or tall photos are split into one crop per card.
+  - Fixed: live grade not rounded; background `render()` rebuilt the scanner mid-camera or mid-scan (guard plus restoring `Scan.lastStill`); auto-capture now needs conf > .5 and sharpness.
+  - Search box uses `CardIndex.search` (typo-tolerant).
+  - Tested with real Tesseract on the user's photos against a 1,201-card decoy index with pokemontcg.io down: Pikachu V 157/172 sure (129), Rayquaza VMAX TG20 sure (120), Octillery TG03 sure (76); Acerola TG24 and Gloria put the right card first in the grid.
+  - Not done: full perspective (keystone) correction. The edge finder plus 63:88 shape rule covered the test photos.
+
 ## Tested (headless Chromium, recorded API responses)
 - No JS errors; no sideways scroll at 400 px or 1280 px; light and dark themes.
 - Search → add → portfolio KPIs, INR conversion, detail page, raw/graded table, alert, sealed add, master-set %, CSV (29 columns), PDF (26 KB), text list, trade verdict, binder link round-trip.

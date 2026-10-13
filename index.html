@@ -250,6 +250,14 @@ table.t td.n,table.t th.n{text-align:right;font-family:var(--font-m);font-varian
 .scrollx{overflow-x:auto}
 .spin{width:16px;height:16px;border-radius:50%;border:2px solid var(--edge);border-top-color:var(--fire);animation:rot .8s linear infinite;display:inline-block;vertical-align:-3px}
 @keyframes rot{to{transform:rotate(360deg)}}
+.pickgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:10px}
+.pickgrid figure{margin:0;display:grid;gap:4px;font-size:11px;text-align:center;color:var(--ink-2)}
+.pickgrid img,.pickgrid .ph{width:100%;aspect-ratio:63/88;object-fit:cover;border-radius:8px;border:1px solid var(--edge);background:var(--glass-lo)}
+.pickgrid .you img{outline:2px dashed var(--water);outline-offset:2px}
+.pick{border:1px solid var(--edge);background:var(--glass-lo);border-radius:12px;padding:6px;display:grid;gap:3px;cursor:pointer;color:inherit;text-align:left;transition:transform .15s,border-color .2s}
+.pick:hover,.pick:focus-visible{transform:translateY(-2px);border-color:var(--water)}
+.pick .pn{font-weight:700;font-size:12px;line-height:1.2}
+.pick .ps{font-size:10.5px;color:var(--ink-2);line-height:1.2}
 .vh{position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;overflow:hidden;clip-path:inset(50%);pointer-events:none}
 label.btn{user-select:none;-webkit-user-select:none}
 body.dropping .stage{outline:3px dashed var(--water);outline-offset:4px}
@@ -478,6 +486,7 @@ function mapDex(d) {
   const cc = (d.set && d.set.cardCount) || {};
   return {
     id: "dex:" + d.id, name: d.name, number: String(d.localId), rarity: d.rarity || "", subtypes: [], supertype: d.category || "",
+    hp: d.hp || null, attacks: (d.attacks || []).map(a => ({ name: a.name })), abilities: (d.abilities || []).map(a => ({ name: a.name })),
     set: { id: d.set ? d.set.id : "", name: d.set ? d.set.name : "", series: (d.set && d.set.serie && d.set.serie.name) || "", printedTotal: cc.official || null, total: cc.total || cc.official || null, ptcgoCode: "" },
     images: { small: d.image ? d.image + "/low.webp" : null, large: d.image ? d.image + "/high.webp" : null },
     tcgplayer: Object.keys(tprices).length ? { url: null, updatedAt: tp.updated || null, prices: tprices } : null,
@@ -910,7 +919,7 @@ const Scan = {
     const small = new Uint8Array(64); for (let i = 0; i < 64; i++) { const x = (i % 8) * 31 + 16, y = ((i / 8) | 0) * 43 + 20; small[i] = img.data[(y * Grader.W + x) * 4]; }
     let diff = 0; if (this.lastFrame) for (let i = 0; i < 64; i++) diff += Math.abs(small[i] - this.lastFrame[i]);
     this.lastFrame = small;
-    const stable = this.lastFrame && diff / 64 < 7 && gr.conf > .35;
+    const stable = this.lastFrame && diff / 64 < 7 && gr.conf > .5 && gr.sharp > 6;
     const now = performance.now();
     if (!stable) this.stableSince = now;
     if (S.settings.stack && stable && now - this.stableSince > 900 && !this.busy && now - this.lastAddedAt > 2500) this.capture(true);
@@ -929,12 +938,20 @@ const Scan = {
   },
   /* photos (artifact mode, or uploads on the web) */
   async fromFiles(files) {
-    const list = [...files].slice(0, 30); if (!list.length) return;
+    const files0 = [...files].slice(0, 30); if (!files0.length) return;
+    this.filesBusy = true;
+    // decode every photo, then split photos that hold several cards
+    const list = [];
+    for (const f of files0) {
+      const b = await decodeImage(f);
+      if (!b) { toast(`Couldn't open ${f.name || "that photo"}. Use a JPEG or PNG photo.`, "bad"); continue; }
+      const parts = await splitCards(b);
+      if (parts.length > 1) toast(`Found ${parts.length} cards in one photo`);
+      list.push(...parts);
+    }
     let done = 0, failed = 0;
-    for (const f of list) {
+    for (const bmp of list) {
       setPhotoProgress(done, list.length);
-      const bmp = await decodeImage(f);
-      if (!bmp) { failed++; done++; toast(`Couldn't open ${f.name || "that photo"}. Use a JPEG or PNG photo.`, "bad"); continue; }
       try {
       // find the card's edges in the photo; fall back to a centred 63:88 crop
       let box = locateCard(bmp);
@@ -950,7 +967,8 @@ const Scan = {
       // text reader gets a slightly larger crop so an edge found a little inside the card can't cut off the number line
       const ex = { x: Math.max(0, box.x - box.w * .03), y: Math.max(0, box.y - box.h * .02) }; ex.w = Math.min(bmp.width - ex.x, box.w * 1.06); ex.h = Math.min(bmp.height - ex.y, box.h * 1.08);
       hi.getContext("2d").drawImage(bmp, ex.x, ex.y, ex.w, ex.h, 0, 0, hi.width, hi.height);
-      const still = $("#stageStill"); still.src = shot.toDataURL("image/jpeg", .85); still.hidden = false; $("#stageIdle").hidden = true;
+      Scan.lastStill = shot.toDataURL("image/jpeg", .85); Scan.lastGrade = gr;
+      const still = $("#stageStill"); still.src = Scan.lastStill; still.hidden = false; $("#stageIdle").hidden = true;
       this.grade = gr; updateMeters(gr);
       const ov = $("#overlay"); const r = ov.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
       ov.width = r.width * dpr; ov.height = r.height * dpr; const ctx = ov.getContext("2d"); ctx.clearRect(0, 0, ov.width, ov.height);
@@ -960,6 +978,7 @@ const Scan = {
       done++;
     }
     setPhotoProgress(done, list.length, failed);
+    this.filesBusy = false;
   },
   async loadOCR() {
     if (this.ocr || this.ocrLoading) return this.ocrLoading;
@@ -981,18 +1000,21 @@ const Scan = {
     const numPasses = [[0, .84, .62, .16, 1600, GC, "6"], [.15, .9, .45, .07, 1400, GC, "6"], [0, .84, .62, .16, 1000, G, "11"], [.38, .84, .62, .16, 1600, GC, "6"], [.38, .84, .62, .16, 1000, G, "11"], [0, .86, 1, .14, 1800, GC, "11"]];
     let text = "", num = null;
     for (const [fx, fy, fw, fh, tg, flt, psm] of numPasses) { const t = await rec(crop(fx, fy, fw, fh, tg, flt), psm); text += "\n" + t; num = parseCardNumber(t); if (num) break; }
-    const nameT = (await rec(crop(.03, .01, .8, .12, 1400, GC), "11")) + "\n" + (await rec(crop(.03, .01, .8, .12, 1000, G), "3"));
-    text = nameT + "\n" + text;
+    const nameT = (await rec(crop(.03, .01, .8, .12, 1400, GC), "11")) + "\n" + (await rec(crop(.03, .01, .97, .12, 1000, G), "3"));
+    const full = await rec(crop(0, 0, 1, 1, 1100, G), "11");   // attack names, rule text, sometimes the number
+    if (!num) num = parseCardNumber(full);
+    text = nameT + "\n" + text + "\n" + full;
+    const hpM = (nameT + " " + full).toUpperCase().replace(/O/g, "0").match(/HP\s?(\d{2,3})\b/);
     const STOP = /^(VMAX|VSTAR|BASIC|STAGE|EVOLVES|FROM|ABILITY|POKEMON|POKÉMON|TRAINER|ITEM|SUPPORTER|RULE)$/i;
     const name = (nameT.match(/[A-Za-zÀ-ÿ'’.\-]{4,}/g) || []).filter(x => !STOP.test(x)).sort((a, b) => b.length - a.length).slice(0, 1).join(" ");
     const raw = text.replace(/\s+/g, " ").trim();
-    return { name, number: num && num.number, total: num && num.total, text: text.toLowerCase(), raw };
+    return { name, number: num && num.number, total: num && num.total, nums: numberCandidates(text), hp: hpM ? +hpM[1] : null, top: nameT, full: text, text: text.toLowerCase(), raw };
   },
   async identify(shot, gr, foil, auto, hi) {
     const thumb = (() => { const t = document.createElement("canvas"); t.width = 126; t.height = 176; t.getContext("2d").drawImage(shot, 0, 0, 126, 176); return t.toDataURL("image/jpeg", .72); })();
-    const cond = { corners: +gr.corners.toFixed(1), edges: +gr.edges.toFixed(1), surface: +gr.surface.toFixed(1), centering: +gr.centering.toFixed(1), overall: gr.overall, lr: Math.round(gr.lr), tb: Math.round(gr.tb), by: "pixels" };
+    const cond = { corners: +gr.corners.toFixed(1), edges: +gr.edges.toFixed(1), surface: +gr.surface.toFixed(1), centering: +gr.centering.toFixed(1), overall: Math.round(gr.overall * 2) / 2, lr: Math.round(gr.lr), tb: Math.round(gr.tb), by: "pixels" };
     setResult({ state: "working", thumb, cond });
-    let found = null, candidates = [], ai = null, note = "";
+    let found = null, candidates = [], ai = null, note = "", confident = null;
     try {
       if (ENV.cap.sample && ENV.aiImages) {
         ai = await claudeIdentify(shot, foil);
@@ -1006,7 +1028,27 @@ const Scan = {
         this.lastOCR = o;
         note = o.number ? `Read #${o.number}${o.total ? "/" + o.total : ""}${o.name ? " · " + o.name : ""}` : (o.raw ? "Read: " + o.raw.slice(0, 60) : "");
         const byText = list => { if (list.length < 2 || !o.text) return list; const f = list.filter(c => nameInText(c.name, o.text)); return f.length ? f : list; };
-        if (ENV.ptcg !== false) {
+        setScanStep("Matching against the card index…");
+        const idx = await CardIndex.load().catch(() => null);
+        if (idx && (o.number || o.text)) {
+          const ranked = CardIndex.rank(o).slice(0, 12);
+          if (ranked.length) {
+            setScanStep("Checking the best matches…");
+            const det = await detailsFor(ranked.map(r => r.b));
+            // real card data: HP and attack names confirm or demote each match
+            const txt = (o.text || "").replace(/[^a-z0-9]/g, "");
+            ranked.forEach((r, i) => { const c = det[i]; r.card = c; if (!c) return;
+              const digits = (o.full || "").toUpperCase().replace(/O/g, "0").replace(/[^0-9]/g, " ");
+              if (c.hp && ((o.hp && +c.hp === o.hp) || (+c.hp >= 30 && new RegExp("\\d?" + (+c.hp) + "\\d?").test(digits.replace(/\s+/g, " "))))) { r.score += 12; r.why.push("HP"); }
+              for (const a of [...(c.attacks || []), ...(c.abilities || [])]) { const an = CardIndex.norm(a.name); if (an.length >= 5 && txt.includes(an)) { r.score += 20; r.why.push("attack"); break; } } });
+            ranked.sort((a, b) => b.score - a.score);
+            candidates = ranked.filter(r => r.card).map(r => r.card);
+            this.lastRank = ranked;
+            const gap = ranked[1] ? ranked[0].score - ranked[1].score : 99;
+            confident = (ranked[0].score >= 90 && gap >= 12) || (ranked[0].score >= 65 && gap >= 25);
+          }
+        }
+        if (!candidates.length && ENV.ptcg !== false) {
           setScanStep("Looking up the card…");
           if (o.number && o.total) candidates = await searchCards(`number:${o.number} set.printedTotal:${o.total}`, 30).catch(() => []);
           if (!candidates.length && o.number) candidates = await searchCards(`number:${o.number}`, 60).catch(() => []);
@@ -1014,7 +1056,7 @@ const Scan = {
           if (candidates.length > 1 && o.total) { const f = candidates.filter(c => c.set.printedTotal == o.total); if (f.length) candidates = f; }
           if (!candidates.length && o.name) candidates = await searchCards(`name:"${o.name.split(" ")[0]}*"`, 12).catch(() => []);
         }
-        if (!candidates.length && (o.number || o.name)) {
+        if (!candidates.length && (o.number || o.name) && !idx) {
           setScanStep("Checking the backup card database…");
           candidates = byText(await dexFind(o).catch(() => []));
         }
@@ -1027,15 +1069,103 @@ const Scan = {
     else if (ai && ai.name) item = itemFromAI(ai, cond, thumb);
     if (item && ai) { item.ai = { variantNote: ai.variantNote, gradeNote: ai.gradeNote, estGrade: ai.estGrade }; if (ai.estUSD && !item.prices?.tcg) item.aiEstUSD = ai.estUSD; }
     if (item) item.cond.foil = foil.kind !== "unknown" ? foil.kind : (ai && ai.foil) || null;
-    setResult({ state: item ? "found" : "miss", item, candidates: candidates.slice(1, 6), thumb, cond, note });
+    if (confident === null) confident = candidates.length === 1 || !!ai;
+    setResult({ state: item ? "found" : "miss", item, topCard: found, candidates: candidates.slice(1, 8), thumb, cond, note, confident });
     if (!item && this.lastOCR && this.lastOCR.name) { const sb = $("#scanSearch"); if (sb) { sb.value = this.lastOCR.name + (this.lastOCR.number ? " " + this.lastOCR.number : ""); sb.dispatchEvent(new Event("input")); } }
-    if (item && (auto || S.settings.stack)) {
+    if (item && confident && (auto || S.settings.stack)) {
       if (this.stream && this.lastAddedId === (item.cardId || item.name) && Date.now() - this.lastAddedAt < 6000) return; // live-camera double-capture guard only
       addItem(item, { quiet: true }); S.stackSession.unshift(item); this.lastAddedId = item.cardId || item.name; this.lastAddedAt = Date.now();
       beep(); renderTray();
     }
   }
 };
+
+/* ---- Local card index: every card's id, number and name from TCGdex, kept on the device (Cache Storage) ----
+   Ranking is local, so a half-read name ("ikachuVI") or a lone number still finds the card. */
+const CardIndex = {
+  cards: null, sets: null, loading: null, KEY: "https://pkmon.local/index-v1.json",
+  norm: s => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]/g, ""),
+  tri: s => { const t = new Set(); for (let i = 0; i + 3 <= s.length; i++) t.add(s.slice(i, i + 3)); return t; },
+  async load() {
+    if (this.cards) return this;
+    if (this.loading) return this.loading;
+    this.loading = (async () => {
+      let data = null;
+      try { const c = await caches.open("pkmon-index"); const r = await c.match(this.KEY); if (r) { const d = await r.json(); if (Date.now() - d.t < 7 * 864e5) data = d; } } catch { /* no Cache Storage */ }
+      if (!data) {
+        if (!navigator.onLine) return null;
+        const get = async u => { const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 45000); try { const r = await fetch(DEX + u, { signal: ctrl.signal }); if (!r.ok) throw new Error(r.status); return await r.json(); } finally { clearTimeout(t); } };
+        const [cards, sets] = await Promise.all([get("/cards"), get("/sets")]);
+        data = { t: Date.now(), cards: cards.map(c => [c.id, c.localId, c.name, c.image || ""]), sets: sets.map(x => [x.id, x.name, x.cardCount && x.cardCount.official, x.cardCount && x.cardCount.total]) };
+        try { const c = await caches.open("pkmon-index"); await c.put(this.KEY, new Response(JSON.stringify(data), { headers: { "content-type": "application/json" } })); } catch { /* keep in memory only */ }
+      }
+      this.sets = new Map(data.sets.map(([id, name, off, tot]) => [id, { name, off, tot }]));
+      this.cards = data.cards.map(([id, lid, name, img]) => {
+        const sid = id.slice(0, id.lastIndexOf("-")), n = this.norm(name);
+        return { id, lid: String(lid), num: normNum(lid), name, n, tri: this.tri(n), img, sid };
+      });
+      return this;
+    })().catch(e => { console.warn("index", e); this.loading = null; return null; });
+    return this.loading;
+  },
+  /* score every card: number + set total + how much of the name the reader saw */
+  rank(o) {
+    const top = this.norm(o.top || o.name || ""), all = this.norm(o.full || o.text || "");
+    const tTop = this.tri(top), tAll = this.tri(all);
+    const num = o.number ? normNum(o.number) : null, tot = o.total || null, gallery = num && /^(TG|GG|SV)/.test(num);
+    // fuzzy number pairs (e.g. "1157/1725" → 157/172) only count when a real set has that size
+    const pairs = new Map(); for (const q of o.nums || []) { if (!pairs.has(q.number)) pairs.set(q.number, new Set()); pairs.get(q.number).add(q.total); }
+    const sfx = { vmax: /vmax/.test(top), vstar: /vstar/.test(top), gx: /gx/.test(top) };
+    const out = [];
+    for (const c of this.cards) {
+      let s = 0, why = [];
+      if (!(num && c.num === num) && pairs.has(c.num)) {
+        const st = this.sets.get(c.sid);
+        if (st && (pairs.get(c.num).has(st.off) || pairs.get(c.num).has(st.tot))) { s += 65; why.push("number+set size"); }
+      }
+      if (sfx.vmax || sfx.vstar) { const cs = / vmax$/i.test(c.name) ? "vmax" : / vstar$/i.test(c.name) ? "vstar" : / v$/i.test(c.name) ? "v" : ""; if ((sfx.vmax && cs === "vmax") || (sfx.vstar && cs === "vstar")) s += 8; else if (cs === "v" || cs === "") s -= 6; }
+      if (num && c.num === num) {
+        s += 45; why.push("number");
+        const st = this.sets.get(c.sid);
+        if (tot && st && (st.off == tot || (gallery && (tot === 30 || tot === 70 || st.tot == tot)))) { s += 25; why.push("set size"); }
+      }
+      if (c.tri.size) {
+        let hitT = 0, hitA = 0; for (const g of c.tri) { if (tTop.has(g)) hitT++; if (tAll.has(g)) hitA++; }
+        const lenW = Math.min(1, c.n.length / 6);
+        const sim = Math.max(hitT / c.tri.size, .75 * hitA / c.tri.size) * lenW + (top.includes(c.n) && c.n.length >= 4 ? .15 : 0);
+        if (sim > .34) { s += 40 * Math.min(1, sim) + Math.min(10, hitT * .6); why.push("name"); }   // more letters seen = more evidence (breaks "Acerola" vs "Acerola's Premonition")
+      }
+      if (s >= 25) out.push({ b: c, score: s, why });
+    }
+    out.sort((a, b) => b.score - a.score || b.b.id.localeCompare(a.b.id));
+    return out;
+  },
+  /* fuzzy name search for the search box */
+  search(q, max = 18) {
+    const n = this.norm(q), tq = this.tri(n); if (n.length < 2) return [];
+    return this.cards.map(c => { let hit = 0; for (const g of tq) if (c.tri.has(g)) hit++; const s = (c.n.startsWith(n) ? 2 : c.n.includes(n) ? 1.5 : 0) + (tq.size ? hit / tq.size : 0); return { c, s }; })
+      .filter(x => x.s >= .6).sort((a, b) => b.s - a.s || a.c.n.length - b.c.n.length).slice(0, max).map(x => x.c);
+  }
+};
+/* full card data for index entries: pokemontcg.io first (same ids for most sets), TCGdex for the rest */
+async function detailsFor(entries) {
+  const ids = entries.map(e => e.id);
+  const pt = ENV.ptcg !== false ? await withTimeout(cardsByIds(ids), 25000, "slow").catch(() => []) : [];
+  const m = new Map(pt.map(c => [c.id, c]));
+  return Promise.all(entries.map(async e => {
+    if (m.has(e.id)) return m.get(e.id);
+    try { return mapDex(await dexGet("/cards/" + encodeURIComponent(e.id))); }
+    catch { return mapDex({ id: e.id, localId: e.lid, name: e.name, image: e.img, set: { id: e.sid, name: (CardIndex.sets.get(e.sid) || {}).name || e.sid, cardCount: { official: (CardIndex.sets.get(e.sid) || {}).off } } }); }
+  }));
+}
+/* several cards side by side (or stacked) in one photo → one crop per card */
+async function splitCards(bmp) {
+  const ar = bmp.width / bmp.height, parts = [];
+  if (ar > 1.15) { const n = clamp(Math.round(ar / .8), 2, 6), w = bmp.width / n; for (let i = 0; i < n; i++) parts.push([i * w, 0, w, bmp.height]); }
+  else if (ar < .5) { const n = clamp(Math.round((1 / ar) / 1.3), 2, 4), hh = bmp.height / n; for (let i = 0; i < n; i++) parts.push([0, i * hh, bmp.width, hh]); }
+  if (!parts.length) return [bmp];
+  return Promise.all(parts.map(([x, y, w, hh]) => { const c = document.createElement("canvas"); c.width = Math.round(w); c.height = Math.round(hh); c.getContext("2d").drawImage(bmp, x, y, w, hh, 0, 0, c.width, c.height); return c; }));
+}
 
 /* Find the card in a photo: the card outline is the longest straight, continuous edge on each side */
 function locateCard(bmp) {
@@ -1080,6 +1210,17 @@ function parseCardNumber(t) {
   m = s.match(/\b(SWSH|SM|XY|BW)\s?(\d{2,3})\b/);
   if (m) return { number: m[1] + m[2], total: null };
   return null;
+}
+/* every plausible number/total pair in noisy text: "1157/1725" → 157/172, 115/172, 157/725 … (the index keeps only real ones) */
+function numberCandidates(t) {
+  const out = [], s = String(t || "").toUpperCase().replace(/(\d)O/g, "$10").replace(/O(\d)/g, "0$1");
+  const one = parseCardNumber(s); if (one) out.push(one);
+  for (const g of s.matchAll(/(GG|[T1I7L]?G)\s?(\d{1,2})\s*[\/|]\s*[T1I7L]?G{1,2}\s?(\d{2})/g)) out.push({ number: (g[1] === "GG" ? "GG" : "TG") + String(+g[2]), total: +g[3] });
+  for (const g of s.matchAll(/(\d{1,4})\s*[\/|]\s*(\d{2,4})/g)) {
+    const L = g[1], R = g[2], ls = new Set([L, L.slice(1), L.slice(0, -1)]), rs = new Set([R, R.slice(1), R.slice(0, -1), R.slice(1, -1)]);
+    for (const l of ls) for (const r of rs) if (l.length >= 1 && l.length <= 3 && r.length >= 2 && r.length <= 3 && +r >= 10 && +l <= +r + 150) out.push({ number: String(+l), total: +r });
+  }
+  return out;
 }
 /* fuzzy: does OCR text contain the card's name? any 4-letter run of the first word counts */
 function nameInText(name, text) {
@@ -1296,6 +1437,8 @@ function setView(v) {
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 function render() {
+  // a background refresh must not rebuild the scanner while the camera or a photo scan is running
+  if (S.view === "scan" && $("#vid") && (Scan.stream || Scan.filesBusy || Scan.busy)) { renderScanCtrls(); renderTray(); return; }
   const m = $("#main"); m.innerHTML = "";
   const v = { scan: viewScan, port: viewPortfolio, trade: viewTrade, set: viewSettings }[S.view]();
   m.append(v);
@@ -1338,7 +1481,11 @@ function viewScan() {
           h("h2", {}, "Find a card by name"),
           searchBox(card => { addItem(itemFromCard(card)); }, { inputId: "scanSearch" }))))
   );
-  queueMicrotask(() => { renderScanCtrls(); setResult(S._lastResult || { state: "idle" }); renderTray(); });
+  queueMicrotask(() => {
+    // after any redraw, put the last scanned photo back instead of the "pick photos" overlay
+    if (Scan.lastStill && !Scan.stream) { const st = $("#stageStill"); st.src = Scan.lastStill; st.hidden = false; $("#stageIdle").hidden = true; if (Scan.lastGrade) updateMeters(Scan.lastGrade); }
+    renderScanCtrls(); setResult(S._lastResult || { state: "idle" }); renderTray();
+  });
   return v;
 }
 function renderScanCtrls() {
@@ -1368,7 +1515,7 @@ function setResult(r) {
   }
   const c = r.cond;
   const gb = h("div", { class: "gradebox" },
-    h("div", { class: "gradeball", style: `--p:${c.overall * 10}` }, h("span", {}, String(c.overall), h("small", {}, "EST. GRADE"))),
+    h("div", { class: "gradeball", style: `--p:${c.overall * 10}` }, h("span", {}, String(Math.round(c.overall * 2) / 2), h("small", {}, "EST. GRADE"))),
     h("div", { class: "stack", style: "gap:7px" }, ...[["Corners", c.corners], ["Edges", c.edges], ["Surface", c.surface], ["Centering", c.centering]].map(([k, v]) =>
       h("div", { class: "mrow" }, h("span", { class: "muted" }, k), h("span", { class: "bar" }, h("i", { style: `width:${v * 10}%` })), h("span", { class: "num", style: "text-align:right;font-weight:700" }, v.toFixed(1)))),
       h("div", { class: "small muted num" }, `L/R ${c.lr}/${100 - c.lr} · T/B ${c.tb}/${100 - c.tb} · ${Grader.label(c.overall)}`)));
@@ -1385,6 +1532,28 @@ function setResult(r) {
     return;
   }
   const it = r.item, inColl = S.items.some(x => x.id === it.id);
+  const cimg = cd => { if (!(cd.images && cd.images.small)) return ph(cd); const im = h("img", { src: cd.images.small, alt: "", loading: "lazy" }); im.onerror = () => im.replaceWith(ph(cd)); return im; };
+  const pick = cd => {
+    const ni = cd === r.topCard ? it : itemFromCard(cd, { cond: it.cond, thumb: it.thumb });
+    if (inColl) removeItem(it.id, true);
+    const nr = { ...r, item: ni, confident: true, topCard: cd, candidates: [r.topCard || null, ...r.candidates].filter(x => x && x !== cd) };
+    if (S.settings.stack || inColl) { addItem(ni, { quiet: true }); S.stackSession.unshift(ni); renderTray(); beep(); }
+    setResult(nr);
+  };
+  r.topCard = r.topCard || r.topCardFromItem;
+  // unsure: show the best matches side by side with the photo, one tap to choose
+  if (!r.confident && r.candidates) {
+    const all = [r.topCard, ...r.candidates].filter(Boolean).slice(0, 8);
+    box.append(
+      h("div", { class: "row between" }, h("h2", {}, "Which card is this?"), h("span", { class: "small muted" }, r.note || "")),
+      h("p", { class: "small muted", style: "margin:4px 0 10px" }, "Best matches for your photo. Tap the right one to add it."),
+      h("div", { class: "pickgrid" },
+        h("figure", { class: "you" }, h("img", { src: r.thumb, alt: "Your photo" }), h("figcaption", {}, "Your photo")),
+        ...all.map(cd => h("button", { class: "pick", onclick: () => pick(cd) }, cimg(cd),
+          h("span", { class: "pn" }, cd.name), h("span", { class: "ps num" }, `${(cd.set && cd.set.name) || ""} · ${cd.number}${cd.set && cd.set.printedTotal ? "/" + cd.set.printedTotal : ""}`)))),
+      h("div", { style: "margin-top:12px" }, gb));
+    return;
+  }
   box.append(
     h("div", { class: "result" },
       h("div", { class: "holo", style: "width:96px" }, cardImg(it)),
@@ -1401,8 +1570,8 @@ function setResult(r) {
       inColl ? h("span", { class: "chip good" }, "✓ Added to collection") : h("button", { class: "btn primary", onclick: () => { addItem(it); setResult({ ...r }); }, html: ICON.plus + "Add to collection" }),
       h("button", { class: "btn", onclick: () => openDetail(it) }, "Prices & details")),
     r.candidates && r.candidates.length ? h("div", { class: "stack", style: "margin-top:12px;gap:6px" }, h("div", { class: "eyebrow" }, "Not this one? Other matches"),
-      h("div", { class: "tray" }, ...r.candidates.map(cd => h("button", { class: "t", style: "border:0;background:none;cursor:pointer", onclick: () => { const ni = itemFromCard(cd, { cond: it.cond, thumb: it.thumb }); if (inColl) { removeItem(it.id, true); addItem(ni, { quiet: true }); } setResult({ ...r, item: ni, candidates: r.candidates.filter(x => x !== cd) }); } },
-        h("img", { src: cd.images.small, alt: cd.name }), `${cd.set.name} ${cd.number}`)))) : null
+      h("div", { class: "tray" }, ...r.candidates.map(cd => h("button", { class: "t", style: "border:0;background:none;cursor:pointer;color:inherit", onclick: () => pick(cd) },
+        cimg(cd), `${(cd.set && cd.set.name) || ""} ${cd.number}`)))) : null
   );
 }
 function renderTray() {
@@ -1423,7 +1592,13 @@ function searchBox(onPick, { placeholder = "e.g. Charizard ex 199 or Rayquaza TG
     const nm = (m ? m[1] : q).replace(/"/g, "").trim(), numQ = m ? normNum(m[2]) : null;
     const query = numQ ? `name:"${nm}*" number:${numQ}` : `name:"${nm}*"`;
     try {
-      let cards = ENV.ptcg !== false ? await searchCards(query, 18).catch(() => []) : [];
+      let cards = [];
+      if (CardIndex.cards) {   // fuzzy, typo-tolerant: "ikachu" or "pikachu v 157"
+        let hits = CardIndex.search(nm, 40);
+        if (numQ) { const f = hits.filter(c => c.num === normNum(numQ)); if (f.length) hits = f; }
+        cards = (await detailsFor(hits.slice(0, 12))).filter(Boolean);
+      }
+      if (!cards.length && ENV.ptcg !== false) cards = await searchCards(query, 18).catch(() => []);
       if (!cards.length) cards = await dexFind({ number: numQ, total: m && m[3] ? +m[3] : null, name: nm }).catch(() => []);
       res.innerHTML = "";
       if (!cards.length) res.append(h("div", { class: "small muted" }, "No cards match. Check spelling or drop the number."));
@@ -2132,6 +2307,7 @@ async function boot() {
     if (db && ENV.uid) { const ok = await Store.loadCloud(); if (ok) render(); }
   }
   ENV.online = await probeOnline(); setModeChip();
+  if (ENV.dex && !ENV.claude) CardIndex.load().then(i => { if (i) { const n = i.cards.length.toLocaleString(); const c = $("#modeChip"); c.title += ` · card index: ${n} cards`; } });
   if (ENV.online) {
     await loadRates();
     await refreshPrices({ quiet: true });
