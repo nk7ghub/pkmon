@@ -2,7 +2,7 @@
   "name": "PKmon Card Vault",
   "short_name": "PKmon",
   "description": "Scan, grade, price and track a Pokémon TCG collection.",
-  "start_url": "PKmon-v1.html",
+  "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#080A16",

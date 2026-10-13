@@ -1,16 +1,18 @@
-# Handoff: PKmon-v1 (Pokémon card scanner and portfolio)
+# Handoff: PKmon (Pokémon card scanner and portfolio)
+
+Moved on 2026-10-13 from `nk7ghub/tamil1-ghub` (private) to its own public repo `nk7ghub/pkmon`, with full commit history. PRs #1–#3 remain in the old repo.
 
 Updated: 2026-10-12
 
 ## Files
 | File | What it is |
 |---|---|
-| `PKmon-v1.html` | The whole app in one file (~155 KB): HTML, CSS and JS |
+| `index.html` | The whole app (was `PKmon-v1.html` in nk7ghub/tamil1-ghub) in one file (~155 KB): HTML, CSS and JS |
 | `pkmon.webmanifest`, `pkmon-icon.svg`, `pkmon-sw.js` | PWA install and offline shell, used on GitHub Pages only |
 | `handoff.md` | This note |
 
 Private artifact: https://claude.ai/artifact/FFUoYWj4Yq8E28Dp5Q4o7f
-Web version, once GitHub Pages is on: https://nk7ghub.github.io/tamil1-ghub/PKmon-v1.html
+Web version, once GitHub Pages is on: https://nk7ghub.github.io/pkmon/
 
 ## Two modes, one file
 The app checks for `window.claude.use` at startup.

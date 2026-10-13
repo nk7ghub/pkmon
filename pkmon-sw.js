@@ -1,6 +1,6 @@
 /* PKmon service worker: app shell offline, network-first for the page, never caches API calls */
-const SHELL = "pkmon-shell-v1";
-const FILES = ["PKmon-v1.html", "pkmon.webmanifest", "pkmon-icon.svg"];
+const SHELL = "pkmon-shell-v2";
+const FILES = ["./", "index.html", "pkmon.webmanifest", "pkmon-icon.svg"];
 self.addEventListener("install", e => e.waitUntil(caches.open(SHELL).then(c => c.addAll(FILES)).then(() => self.skipWaiting())));
 self.addEventListener("activate", e => e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== SHELL).map(k => caches.delete(k)))).then(() => self.clients.claim())));
 self.addEventListener("fetch", e => {
