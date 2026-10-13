@@ -87,6 +87,11 @@ To move a vault between modes: Export → Full backup (JSON), then Settings → 
   - **Install button:** now always visible unless running installed. Downloaded copies (`file:` / `content:`) get a sheet pointing to the live site, plus a one-time toast.
   - **Stack limits:** `MAX_PER_PHOTO = 6` (one row; 3–4 reads best), `MAX_PHOTOS = 30` per batch; the live camera has no limit (one card at a time). Shown under the Stack mode switch.
 
+- 2026-10-13 (back button + change card):
+  - **`Nav`:** on the web every `setView` and the first `openSheet` push a history entry, so phone Back closes a sheet, then steps back through screens. The first entry is a root marker: Back there toasts "Press back again to close PKmon", and the next Back leaves. Inside Claude, history is untouched and only the on-screen buttons work. `#backBtn` in the header and a "Back" button atop every sheet; the header compacts below 460 px.
+  - **`openReplace(it)`:** same-name prints, then V/VMAX/ex versions, then similar names (max 30), ordered by `Visual` similarity to `it.thumb`, plus a search box. **`replaceItem(old, card)`** keeps id, qty, paid, grade, notes and alerts, clears `check`, and updates the stack session and the last scan result.
+  - **Entry points:** the "Check ›" chip (any list), the Portfolio "N cards to check · Review" bar (`openReview`), the detail page bar ("It's correct" / "Change card", or "Wrong card, set or print? Change card"), and "Change" on batch rows.
+
 ## Tested (headless Chromium, recorded API responses)
 - No JS errors; no sideways scroll at 400 px or 1280 px; light and dark themes.
 - Search → add → portfolio KPIs, INR conversion, detail page, raw/graded table, alert, sealed add, master-set %, CSV (29 columns), PDF (26 KB), text list, trade verdict, binder link round-trip.
