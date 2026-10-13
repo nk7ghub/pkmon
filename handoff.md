@@ -77,6 +77,8 @@ The `Install` object: `beforeinstallprompt` on Chrome/Edge/Android; Safari Share
 | 2026-10-13 | PR #3: back navigation (`Nav`), change-card flow (`openReplace` / `replaceItem` / `openReview`). |
 | 2026-10-13 | **PR #4: scan speed.** The user saw 3 cards take 3–5 min with 2 "not found". Reproduced: old code + a card list that never loads = **268 s, 0/3 found** (the list download was retried for every card with a 45 s timeout, then fell back to slow searches). Fix: list downloaded once with % progress and stall guard; 4 OCR passes instead of 9 (smaller strips); picture check 4 s/image, 8 s overall, pool 24; TCGdex + pokemontcg.io in parallel; slow pokemontcg.io skipped; per-card timing shown. |
 
+| 2026-10-13 | **Rollback (user request):** `index.html` restored to `e184dea` (after PR #2, before PR #3), the version the user found scanned best. Removed by this rollback: back navigation (`Nav`), change-card (`openReplace` / `replaceItem` / `openReview`), and the PR #4 speed changes (card-list single download, 4 OCR passes, budgets, timing line). Kept: blueprint, skill, review, handoff. Re-apply later one change at a time, testing on the phone after each. |
+
 ## Benchmarks (headless Chromium, user's Alcremie / Charizard ex / Umbreon VMAX photo)
 Simulated slow network: pokemontcg.io hanging, TCGdex list 4 s, details 1.5 s, images 0.6 s.
 
