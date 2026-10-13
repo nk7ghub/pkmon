@@ -1,0 +1,186 @@
+<title>pk-livscancards1 Skill Review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Instrument+Sans:wght@400;500;600;700&family=Instrument+Serif&display=swap">
+<style>
+/* Layout: one reading column; a lens-style "pipeline strip" header, then a fit matrix, worked examples and a savings ledger */
+:root{
+  --bg:#F3F1EC; --surface:#FFFFFF; --ink:#1B1A22; --ink-2:#55536A; --ink-3:#8A889D; --line:#E2DFD6;
+  --accent:#2F5BEA; --accent-2:#E2582C; --good:#11845B; --mid:#B7791F; --low:#B42345;
+  --chip:#ECEAF6;
+  --f-display:"Instrument Serif",Georgia,serif; --f-body:"Instrument Sans",system-ui,-apple-system,"Segoe UI",sans-serif; --f-mono:"Space Mono",ui-monospace,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+  --bg:#111019; --surface:#1A1926; --ink:#ECEBF5; --ink-2:#B1AFC6; --ink-3:#7D7B93; --line:#2C2A3B;
+  --accent:#7C9BFF; --accent-2:#FF8A5C; --good:#3DD39A; --mid:#E6B14E; --low:#FF6F8E; --chip:#25233A; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#111019; --surface:#1A1926; --ink:#ECEBF5; --ink-2:#B1AFC6; --ink-3:#7D7B93; --line:#2C2A3B;
+  --accent:#7C9BFF; --accent-2:#FF8A5C; --good:#3DD39A; --mid:#E6B14E; --low:#FF6F8E; --chip:#25233A; color-scheme:dark}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:16px/1.55 var(--f-body);margin:0}
+.wrap{max-width:960px;margin:0 auto;padding-inline:16px;padding-block:28px 64px}
+h1,h2,h3{text-wrap:balance;margin:0}
+h1{font-family:var(--f-display);font-weight:400;font-size:clamp(34px,6vw,54px);line-height:1.05;letter-spacing:-.01em}
+h2{font-family:var(--f-display);font-weight:400;font-size:clamp(24px,3.6vw,32px);margin-top:44px}
+h3{font-size:16px;font-weight:700}
+.eyebrow{font:700 11px/1 var(--f-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--ink-3)}
+.lede{color:var(--ink-2);max-width:65ch;margin:12px 0 0}
+.muted{color:var(--ink-2)} .small{font-size:13.5px}
+.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+/* pipeline strip */
+.strip{display:flex;flex-wrap:wrap;gap:6px;margin-top:22px}
+.step{font:700 12px/1 var(--f-mono);padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--surface);display:flex;gap:6px;align-items:center}
+.step i{font-style:normal;color:var(--accent-2)}
+.arrow{align-self:center;color:var(--ink-3);font-family:var(--f-mono)}
+/* cards / tables */
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));margin-top:16px}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:16px;display:grid;gap:8px;align-content:start;min-width:0}
+.card p{margin:0;color:var(--ink-2);font-size:14.5px}
+.fit{display:flex;align-items:center;gap:8px;font:700 12px/1 var(--f-mono)}
+.dots{display:inline-flex;gap:3px}
+.dots b{width:9px;height:9px;border-radius:50%;background:var(--line);display:block}
+.dots b.on{background:currentColor}
+.hi{color:var(--good)} .md{color:var(--mid)} .lo{color:var(--low)}
+.swap{font-size:13px;color:var(--ink-2);border-top:1px dashed var(--line);padding-top:8px}
+.swap b{color:var(--ink)}
+.ex{font-size:13.5px;background:var(--chip);border-radius:8px;padding:8px 10px;color:var(--ink)}
+.scroll{overflow-x:auto;margin-top:14px;border:1px solid var(--line);border-radius:12px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14px;min-width:620px}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font:700 11px/1.2 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+td.n,th.n{text-align:right;font-family:var(--f-mono);font-variant-numeric:tabular-nums;white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.bar{height:8px;border-radius:8px;background:var(--line);overflow:hidden;min-width:80px}
+.bar i{display:block;height:100%;background:var(--accent);border-radius:8px}
+.kpis{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(min(100%,200px),1fr));margin-top:16px}
+.kpi{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
+.kpi .v{font:700 26px/1.1 var(--f-mono);margin-top:6px}
+.kpi .d{font-size:13px;color:var(--ink-2);margin-top:4px}
+.note{border-left:3px solid var(--accent-2);padding:10px 14px;background:var(--surface);border-radius:0 10px 10px 0;margin-top:16px;font-size:14px;color:var(--ink-2)}
+ul.tight{margin:8px 0 0;padding-left:20px;color:var(--ink-2)} ul.tight li{margin:4px 0}
+footer{margin-top:48px;color:var(--ink-3);font-size:13px;border-top:1px solid var(--line);padding-top:14px}
+</style>
+
+<div class="wrap">
+  <div class="eyebrow">Skill review · pk-livscancards1</div>
+  <h1>How far a card scanner travels</h1>
+  <p class="lede">What the <b>pk-livscancards1</b> skill packages, which real-life problems it fits, a worked example for each, and how much build time and tokens it saves now and on future projects. The figures are planning estimates, explained below; no user data is included.</p>
+
+  <div class="strip" aria-label="Reusable scan pipeline">
+    <span class="step"><i>01</i>Photo in</span><span class="arrow">→</span>
+    <span class="step"><i>02</i>Split items</span><span class="arrow">→</span>
+    <span class="step"><i>03</i>Locate &amp; crop</span><span class="arrow">→</span>
+    <span class="step"><i>04</i>Grade</span><span class="arrow">→</span>
+    <span class="step"><i>05</i>OCR / ID</span><span class="arrow">→</span>
+    <span class="step"><i>06</i>Catalogue rank</span><span class="arrow">→</span>
+    <span class="step"><i>07</i>Picture check</span><span class="arrow">→</span>
+    <span class="step"><i>08</i>Prices</span><span class="arrow">→</span>
+    <span class="step"><i>09</i>Sure / pick grid</span>
+  </div>
+
+  <h2>What the skill carries</h2>
+  <div class="scroll"><table>
+    <thead><tr><th>Module</th><th>What it solves</th><th class="n">Reuse outside cards</th><th></th></tr></thead>
+    <tbody>
+      <tr><td><b>Phone-safe input</b></td><td>Native label-for inputs, paste/drop, blocked-picker detector</td><td class="n">100%</td><td><div class="bar"><i style="width:100%"></i></div></td></tr>
+      <tr><td><b>Multi-item split + locate</b></td><td>Texture-gap split, edge continuity, aspect-ratio search</td><td class="n">80%</td><td><div class="bar"><i style="width:80%"></i></div></td></tr>
+      <tr><td><b>Multi-pass OCR + ID parsing</b></td><td>Few small passes, noisy-ID candidates checked against the catalogue</td><td class="n">75%</td><td><div class="bar"><i style="width:75%"></i></div></td></tr>
+      <tr><td><b>Local catalogue index</b></td><td>One cached download, % progress, stall guard, trigram ranking</td><td class="n">90%</td><td><div class="bar"><i style="width:90%"></i></div></td></tr>
+      <tr><td><b>Picture check</b></td><td>Colour grid + gradient hash to separate look-alike variants</td><td class="n">70%</td><td><div class="bar"><i style="width:70%"></i></div></td></tr>
+      <tr><td><b>Condition grader</b></td><td>Centering ratios, corners/edges, surface defects</td><td class="n">45%</td><td><div class="bar"><i style="width:45%"></i></div></td></tr>
+      <tr><td><b>Market comparison</b></td><td>Side-by-side sources, deep links, labelled estimates, currencies, alerts</td><td class="n">85%</td><td><div class="bar"><i style="width:85%"></i></div></td></tr>
+      <tr><td><b>Review &amp; correct</b></td><td>Best-guess "Check" flags, pick grid, change-item that keeps history</td><td class="n">95%</td><td><div class="bar"><i style="width:95%"></i></div></td></tr>
+      <tr><td><b>Platform shell</b></td><td>PWA install, history Back, artifact/web dual mode, exports</td><td class="n">100%</td><td><div class="bar"><i style="width:100%"></i></div></td></tr>
+    </tbody>
+  </table></div>
+  <p class="small muted">Reuse = share of the module that carries over unchanged to other domains (author's estimate from the code structure).</p>
+
+  <h2>Where it fits in real life</h2>
+  <div class="grid">
+    <div class="card"><div class="fit hi"><span class="dots"><b class="on"></b><b class="on"></b><b class="on"></b><b class="on"></b><b class="on"></b></span>Excellent fit</div>
+      <h3>Price comparison</h3>
+      <p>Scan a product or shelf tag, match it to a catalogue, show several sellers side by side in the user's currency, set a drop alert.</p>
+      <div class="ex">Example: a grocery price checker that scans a pack and shows three shops' prices per kg, with an alert when one falls.</div>
+      <div class="swap">Swap: <b>catalogue source</b>, <b>price feeds</b>. Keep: index, comparison cards, alerts.</div></div>
+
+    <div class="card"><div class="fit hi"><span class="dots"><b class="on"></b><b class="on"></b><b class="on"></b><b class="on"></b><b class="on"></b></span>Excellent fit</div>
+      <h3>Market data &amp; collectibles</h3>
+      <p>Any item with variants and a resale market: coins, stamps, sneakers, comics, vinyl, model kits.</p>
+      <div class="ex">Example: a stamp album tool that splits a page photo into stamps, IDs each by picture, and values the album with 30-day averages.</div>
+      <div class="swap">Swap: <b>aspect ratio</b>, <b>ID regex</b>. Keep: picture check, portfolio, trend chart.</div></div>
+
+    <div class="card"><div class="fit hi"><span class="dots"><b class="on"></b><b class="on"></b><b class="on"></b><b class="on"></b><b></b></span>Strong fit</div>
+      <h3>Barcode &amp; QR</h3>
+      <p>Replace the OCR stage with the browser BarcodeDetector API (or a JS decoder); everything after the ID is reused. IDs become exact, so the pick grid is rarely needed.</p>
+      <div class="ex">Example: an ISBN shelf scanner for a school library that flags missing or duplicate books and exports a CSV stock-take.</div>
+      <div class="swap">Swap: <b>stage 05</b> only.</div></div>
+
+    <div class="card"><div class="fit hi"><span class="dots"><b class="on"></b><b class="on"></b><b class="on"></b><b class="on"></b><b></b></span>Strong fit</div>
+      <h3>Educational tools</h3>
+      <p>Scan flashcards, worksheets or specimens; ID them against a curriculum list; give feedback, scores and progress bars (the "set progress" view).</p>
+      <div class="ex">Example: a vocabulary flashcard scanner that logs which cards a student owns and schedules spaced-repetition quizzes.</div>
+      <div class="swap">Swap: <b>catalogue</b> = syllabus; prices → scores. Keep: stack scanning, review list.</div></div>
+
+    <div class="card"><div class="fit md"><span class="dots"><b class="on"></b><b class="on"></b><b class="on"></b><b></b><b></b></span>Good fit</div>
+      <h3>Text mining from photos</h3>
+      <p>Receipts, invoices, labels, forms. The multi-pass OCR, noisy-ID parsing and "check against a list" pattern carry over; layout extraction must be added.</p>
+      <div class="ex">Example: a receipt scanner that pulls totals and dates into an expense CSV, with the pick grid for unclear amounts.</div>
+      <div class="swap">Add: <b>field extraction rules</b>. Keep: OCR budgets, review flags.</div></div>
+
+    <div class="card"><div class="fit md"><span class="dots"><b class="on"></b><b class="on"></b><b class="on"></b><b></b><b></b></span>Good fit</div>
+      <h3>Shapes &amp; patterns</h3>
+      <p>Locate-and-measure plus colour/shape hashing works for simple shapes and repeating patterns; fine-grained species or defects need learned features.</p>
+      <div class="ex">Example: a tile or fabric pattern matcher that finds the closest catalogue design, or a coin sorter that uses diameter and colour.</div>
+      <div class="swap">Swap: <b>locate</b> (circles, free shapes). Upgrade: <b>picture check</b> → embeddings.</div></div>
+
+    <div class="card"><div class="fit md"><span class="dots"><b class="on"></b><b class="on"></b><b class="on"></b><b></b><b></b></span>Good fit</div>
+      <h3>Condition &amp; quality checks</h3>
+      <p>The grader's centering, edge and surface measures map to print alignment, packaging damage and label placement.</p>
+      <div class="ex">Example: a print-shop QC tool that measures margin centering on proofs and flags scuffed corners before shipping.</div>
+      <div class="swap">Retune: <b>grader thresholds</b>. Keep: overlay meters.</div></div>
+
+    <div class="card"><div class="fit lo"><span class="dots"><b class="on"></b><b class="on"></b><b></b><b></b><b></b></span>Limited fit</div>
+      <h3>Handwriting</h3>
+      <p>Browser OCR reads printed text, not handwriting. Use the artifact path (Claude vision) for handwriting, and keep the review and pick-grid pattern for low-confidence reads.</p>
+      <div class="ex">Example: a handwritten answer-sheet collector that groups scans by student for a teacher to review; the reading itself is done by a vision model.</div>
+      <div class="swap">Swap: <b>stage 05</b> → vision model. Expect slower, metered reads.</div></div>
+  </div>
+
+  <h2>Time and tokens saved</h2>
+  <p class="lede">The basis is this project's own history: one initial build, then about 10 fix rounds over two days. About 7 of those rounds fixed problems the skill now prevents up front: blocked pickers, `[hidden]` and viewport on Pages, multi-card splitting, look-alike variants, back navigation, change-card, and catalogue download retries. One fix round in a long session is estimated at roughly 100–200k tokens and 40–60 minutes, including re-reading context and running tests.</p>
+  <div class="kpis">
+    <div class="kpi"><div class="eyebrow">Fix rounds avoided</div><div class="v">~7</div><div class="d">of ~10 in this project</div></div>
+    <div class="kpi"><div class="eyebrow">Tokens saved, next similar app</div><div class="v">0.7–1.4M</div><div class="d">7 rounds × 100–200k</div></div>
+    <div class="kpi"><div class="eyebrow">Time saved, next similar app</div><div class="v">5–7 h</div><div class="d">plus ~1 day of back-and-forth testing on a phone</div></div>
+    <div class="kpi"><div class="eyebrow">Per future change to PKmon</div><div class="v">50–100k</div><div class="d">tokens not spent re-deriving the architecture</div></div>
+  </div>
+  <div class="scroll"><table>
+    <thead><tr><th>Scenario</th><th class="n">Without skill</th><th class="n">With skill</th><th class="n">Saved</th></tr></thead>
+    <tbody>
+      <tr><td>Extend PKmon (new feature)</td><td class="n">~150–250k tok · 1–2 h</td><td class="n">~80–150k tok · 0.5–1 h</td><td class="n">~40%</td></tr>
+      <tr><td>New scan-and-price app, other domain</td><td class="n">~1.5–2.5M tok · 2 days</td><td class="n">~0.5–0.9M tok · 3–5 h</td><td class="n">~60%</td></tr>
+      <tr><td>Barcode inventory app</td><td class="n">~0.8–1.2M tok · 1 day</td><td class="n">~0.3–0.5M tok · 2–3 h</td><td class="n">~60%</td></tr>
+      <tr><td>Educational scanner (flashcards)</td><td class="n">~0.8–1.5M tok · 1–1.5 days</td><td class="n">~0.4–0.7M tok · 3–4 h</td><td class="n">~50%</td></tr>
+      <tr><td>Handwriting reader</td><td class="n">~1M tok · 1 day</td><td class="n">~0.6–0.8M tok · 5–6 h</td><td class="n">~25%</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><b>How to read these.</b> These are planning estimates, not measurements: token counts per round vary with how long the conversation is. Savings come from not repeating known failures, which are the slowest part because each needs a phone test by you. The biggest saving goes to builds closest to "photo → ID → price → list".</div>
+
+  <h2>Limits to plan for</h2>
+  <ul class="tight">
+    <li>Browser OCR on stylised print and foil is the weak link; the catalogue rank plus the picture check carries most of the accuracy.</li>
+    <li>The picture check uses simple features. For large look-alike catalogues, precompute fingerprints (a planned Phase 2) or use embeddings.</li>
+    <li>Artifact mode has no network, camera or install, so live data and scanning belong in the web build.</li>
+    <li>Prices from public feeds lag; graded values are model estimates and must stay labelled.</li>
+    <li>Medical, legal or identity documents need extra safety and privacy review before reuse.</li>
+  </ul>
+
+  <h2>How to use it</h2>
+  <ul class="tight">
+    <li>Say "use pk-livscancards1" or describe a scan-and-price tool; the skill loads automatically.</li>
+    <li>In the PKmon repo, it reads <span class="num">handoff.md</span> and extends; elsewhere, it starts from the blueprint (<span class="num">pk-livscancards1-blueprint.md</span>).</li>
+    <li>Keep the workflow: plan, risks, approval, live %, test on real photos, PR, handoff.</li>
+  </ul>
+
+  <footer>pk-livscancards1 · skill review · files kept in the PKmon repo: blueprint, skill, this review.</footer>
+</div>
