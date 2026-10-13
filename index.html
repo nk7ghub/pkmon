@@ -439,7 +439,7 @@ async function api(path, { ttl = CACHE_TTL, signal } = {}) {
   if (hit && Date.now() - hit.t < ttl) return hit.d;
   const headers = S.settings.apiKey ? { "X-Api-Key": S.settings.apiKey } : {};
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15000);
+  const timer = setTimeout(() => { ctrl.abort(); ENV.ptcgSlow = true; }, 10000);   // remember: skip it in scans this session
   signal && signal.addEventListener("abort", () => ctrl.abort());
   try {
     const r = await fetch(API + path, { headers, signal: ctrl.signal });
@@ -513,24 +513,32 @@ function mapDex(d) {
     cardmarket: cm ? { url: null, updatedAt: cm.updated || null, prices: { averageSellPrice: cm.avg, lowPrice: cm.low, trendPrice: cm.trend, avg1: cm.avg1, avg7: cm.avg7, avg30: cm.avg30, reverseHoloTrend: cm["trend-holo"], reverseHoloAvg1: cm["avg1-holo"], reverseHoloAvg7: cm["avg7-holo"], reverseHoloAvg30: cm["avg30-holo"] } } : null
   };
 }
-async function dexGet(path, ttl = 6 * 36e5) {
+async function dexGet(path, ttl = 6 * 36e5, timeout = 20000) {
   const key = "dex:" + path, hit = LS.get(key, null);
   if (hit && Date.now() - hit.t < ttl) return hit.d;
-  const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 20000);
+  const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), timeout);
   try { const r = await fetch(DEX + path, { signal: ctrl.signal }); if (!r.ok) throw new Error("Backup card database answered " + r.status); const d = await r.json(); LS.set(key, { t: Date.now(), d }); return d; }
   catch (e) { if (hit) return hit.d; throw e; } finally { clearTimeout(t); }
 }
 async function dexCards(list, max = 8) {
   const out = [];
-  for (const b of (list || []).slice(0, max)) { try { out.push(mapDex(await dexGet("/cards/" + encodeURIComponent(b.id)))); } catch { /* skip one */ } }
+  const got = await Promise.all((list || []).slice(0, max).map(b => dexGet("/cards/" + encodeURIComponent(b.id), undefined, 8000).then(mapDex).catch(() => null)));   // parallel, 8 s each
+  for (const c of got) if (c) out.push(c);
   return out;
 }
-async function dexFind({ number, total, name }) {
+async function dexFind({ number, total, name, names, top: text }) {
   let list = [];
-  if (number) list = await dexGet("/cards?localId=eq:" + encodeURIComponent(number)).catch(() => []);
-  if (number && !list.length && /^\d+$/.test(number)) list = await dexGet("/cards?localId=eq:" + String(number).padStart(3, "0")).catch(() => []);
-  if (name && list.length > 1) { const w = name.toLowerCase(); const f = list.filter(c => w.includes(c.name.toLowerCase().split(/[\s-]/)[0])); if (f.length) list = f; }
-  if (!list.length && name) list = await dexGet("/cards?name=" + encodeURIComponent(name.split(" ")[0])).catch(() => []);
+  const q = u => dexGet(u, undefined, 8000).catch(() => []);
+  if (number) list = await q("/cards?localId=eq:" + encodeURIComponent(number));
+  if (number && !list.length && /^\d+$/.test(number)) list = await q("/cards?localId=eq:" + String(number).padStart(3, "0"));
+  if (name && list.length > 1) { const w = name.toLowerCase(); const f = list.filter(c => nameInText(c.name, w)); if (f.length) list = f; }
+  if (!list.length && (names || name)) {   // try the likeliest name words together, keep cards whose name fits the text best
+    const words = (names && names.length ? names : [name.split(" ")[0]]).slice(0, 3);
+    // first 6 letters: OCR often glues junk to the end ("UmbreonVy"), and TCGdex name search matches parts of names
+    const lists = await Promise.all(words.map(w => q("/cards?name=" + encodeURIComponent(w.replace(/[^A-Za-zÀ-ÿ]/g, "").slice(0, 6)))));
+    list = [...new Map(lists.flat().map(c => [c.id, c])).values()];
+    if (text && list.length > 1) { const sc = c => { const n = CardIndex.norm(c.name), t = CardIndex.tri(n); let hit = 0; const tt = CardIndex.tri(CardIndex.norm(text)); for (const g of t) if (tt.has(g)) hit++; return hit / Math.max(1, t.size) + Math.min(.3, hit * .02); }; list.sort((a, b) => sc(b) - sc(a)); }
+  }
   let cards = await dexCards(list, 10);
   if (total) { const f = cards.filter(c => c.set.printedTotal == total); if (f.length) cards = f; }
   return cards;
@@ -960,7 +968,8 @@ const Scan = {
   async fromFiles(files) {
     if (files.length > MAX_PHOTOS) toast(`Scanning the first ${MAX_PHOTOS} photos. Add the rest in another batch.`, "bad");
     const files0 = [...files].slice(0, MAX_PHOTOS); if (!files0.length) return;
-    this.filesBusy = true;
+    this.filesBusy = true; this.batchT0 = performance.now();
+    if (!CardIndex.cards && navigator.onLine && !ENV.claude) CardIndex.load();   // download the card list while the first card is read
     // decode every photo, then split photos that hold several cards
     const list = [];
     for (const f of files0) {
@@ -1021,20 +1030,25 @@ const Scan = {
     const rec = async (c, psm = "6") => { await w.setParameters({ tessedit_pageseg_mode: psm }); return (await withTimeout(w.recognize(c), 30000, "Reading the card took too long")).data.text || ""; };
     const G = "grayscale(1)", GC = "grayscale(1) contrast(1.7)";
     // several passes; small italic print on foil needs different crops and layout modes. Stop at the first readable number.
-    const numPasses = [[0, .84, .62, .16, 1600, GC, "6"], [.15, .9, .45, .07, 1400, GC, "6"], [0, .84, .62, .16, 1000, G, "11"], [.38, .84, .62, .16, 1600, GC, "6"], [.38, .84, .62, .16, 1000, G, "11"], [0, .86, 1, .14, 1800, GC, "11"]];
+    // 4 passes max (was 6), smaller strips: ~3× faster on phones, same reads on the test photos
+    const numPasses = [[.15, .9, .45, .07, 1100, GC, "6"], [0, .84, .62, .16, 1150, GC, "6"], [0, .84, .62, .16, 900, G, "11"], [.38, .84, .62, .16, 1150, GC, "6"]];
     let text = "", num = null;
     for (const [fx, fy, fw, fh, tg, flt, psm] of numPasses) { const t = await rec(crop(fx, fy, fw, fh, tg, flt), psm); text += "\n" + t; num = parseCardNumber(t); if (num) break; }
-    const nameT = (await rec(crop(.03, .01, .8, .12, 1400, GC), "11")) + "\n" + (await rec(crop(.03, .01, .97, .12, 1000, G), "3"));
-    const full = await rec(crop(0, 0, 1, 1, 1100, G), "11");   // attack names, rule text, sometimes the number
+    let nameT = await rec(crop(.03, .01, .8, .12, 1000, GC), "11");
+    if (!/[A-Za-z]{5,}/.test(nameT)) nameT += "\n" + await rec(crop(.03, .01, .97, .12, 900, G), "3");
+    const full = await rec(crop(0, 0, 1, 1, 850, G), "11");   // attack names, rule text, HP, sometimes the number
     if (!num) num = parseCardNumber(full);
     text = nameT + "\n" + text + "\n" + full;
     const hpM = (nameT + " " + full).toUpperCase().replace(/O/g, "0").match(/HP\s?(\d{2,3})\b/);
     const STOP = /^(VMAX|VSTAR|BASIC|STAGE|EVOLVES|FROM|ABILITY|POKEMON|POKÉMON|TRAINER|ITEM|SUPPORTER|RULE)$/i;
-    const name = (nameT.match(/[A-Za-zÀ-ÿ'’.\-]{4,}/g) || []).filter(x => !STOP.test(x)).sort((a, b) => b.length - a.length).slice(0, 1).join(" ");
+    const cleanTop = nameT.replace(/evolves\s+from\s+\S+/gi, " ");   // "Evolves from Charmeleon" is not the card's name
+    const names = [...new Set((cleanTop.match(/[A-Za-zÀ-ÿ'’.\-]{4,}/g) || []).filter(x => !STOP.test(x)).sort((a, b) => b.length - a.length))].slice(0, 3);
+    const name = names[0] || "";
     const raw = text.replace(/\s+/g, " ").trim();
-    return { name, number: num && num.number, total: num && num.total, nums: numberCandidates(text), hp: hpM ? +hpM[1] : null, top: nameT, full: text, text: text.toLowerCase(), raw };
+    return { name, names, number: num && num.number, total: num && num.total, nums: numberCandidates(text), hp: hpM ? +hpM[1] : null, top: nameT, full: text, text: text.toLowerCase(), raw };
   },
   async identify(shot, gr, foil, auto, hi, batch = false) {
+    const T = mkTimer();
     const thumb = (() => { const t = document.createElement("canvas"); t.width = 126; t.height = 176; t.getContext("2d").drawImage(shot, 0, 0, 126, 176); return t.toDataURL("image/jpeg", .72); })();
     const cond = { corners: +gr.corners.toFixed(1), edges: +gr.edges.toFixed(1), surface: +gr.surface.toFixed(1), centering: +gr.centering.toFixed(1), overall: Math.round(gr.overall * 2) / 2, lr: Math.round(gr.lr), tb: Math.round(gr.tb), by: "pixels" };
     if (batch) setScanStepBatch(); else setResult({ state: "working", thumb, cond });
@@ -1053,16 +1067,30 @@ const Scan = {
         note = o.number ? `Read #${o.number}${o.total ? "/" + o.total : ""}${o.name ? " · " + o.name : ""}` : (o.raw ? "Read: " + o.raw.slice(0, 60) : "");
         const byText = list => { if (list.length < 2 || !o.text) return list; const f = list.filter(c => nameInText(c.name, o.text)); return f.length ? f : list; };
         setScanStep("Matching against the card index…");
-        const idx = await CardIndex.load().catch(() => null);
+        T.mark("read");
+        let idx = CardIndex.cards ? CardIndex : null;
+        if (!idx && !CardIndex.stalled) {   // after one stall, later cards don't wait again (the download carries on)
+          const pl = CardIndex.load().catch(() => null);
+          // wait while the download is moving; if it stalls for 10 s this card goes on without it (the download continues)
+          let lastPct = -1, lastMove = performance.now(), done = false; pl.then(() => done = true);
+          while (!done && CardIndex.status === "loading") {
+            if (CardIndex.pct !== lastPct) { lastPct = CardIndex.pct; lastMove = performance.now(); }
+            if (performance.now() - lastMove > 7000) { CardIndex.stalled = true; pl.then(() => CardIndex.stalled = false); break; }
+            setScanStep(`Downloading the card list (first time only)… ${CardIndex.pct}%`);
+            await sleep(300);
+          }
+          idx = CardIndex.cards ? CardIndex : null;
+        }
+        if (!idx) note = (note ? note + " · " : "") + "Card list unavailable, used quick search";
         if (idx && (o.number || o.text)) {
           // strong text read → top 12; weak read → a wider pool of 40 so the picture check can find the card
           const strict = CardIndex.rank(o); let ranked, relaxed = false;
-          if (!strict.length) { ranked = CardIndex.rank(o, 12).slice(0, 40); relaxed = true; }
-          else if (strict[0].score < 60) ranked = CardIndex.rank(o, 12).slice(0, 40);
+          if (!strict.length) { ranked = CardIndex.rank(o, 12).slice(0, 24); relaxed = true; }
+          else if (strict[0].score < 60) ranked = CardIndex.rank(o, 12).slice(0, 24);
           else ranked = strict.slice(0, 12);
           // other prints with the same name (regular / full art / rainbow / gallery) so the picture check can tell them apart
           const top3 = new Set(ranked.slice(0, 3).map(r => r.b.n));
-          for (const c of CardIndex.cards) { if (ranked.length >= 46) break; if (top3.has(c.n) && !ranked.some(r => r.b === c)) ranked.push({ b: c, score: Math.max(0, ranked.find(r => r.b.n === c.n).score - 30), why: ["same name"] }); }
+          for (const c of CardIndex.cards) { if (ranked.length >= 30) break; if (top3.has(c.n) && !ranked.some(r => r.b === c)) ranked.push({ b: c, score: Math.max(0, ranked.find(r => r.b.n === c.n).score - 30), why: ["same name"] }); }
           if (ranked.length) {
             // 1) picture check on the whole pool (official images from the index)
             setScanStep(`Comparing card pictures (${ranked.length})…`);
@@ -1072,6 +1100,7 @@ const Scan = {
                 if (mx - mn > .03) ranked.forEach((r, i) => { if (sims[i] == null) return; const b = 45 * (sims[i] - mn) / (mx - mn); r.score += b; r.vis = +sims[i].toFixed(3); if (b > 33) r.why.push("picture"); }); } }
             ranked.sort((a, b) => b.score - a.score); ranked = ranked.slice(0, 12);
             // 2) real card data for the best 12: HP and attack names confirm or demote each match
+            T.mark("pictures");
             setScanStep("Checking the best matches…");
             const det = await detailsFor(ranked.map(r => r.b));
             const txt = (o.text || "").replace(/[^a-z0-9]/g, "");
@@ -1086,17 +1115,22 @@ const Scan = {
             confident = !relaxed && ((ranked[0].score >= 90 && gap >= 12) || (ranked[0].score >= 65 && gap >= 25));
           }
         }
-        if (!candidates.length && ENV.ptcg !== false) {
+        if (!candidates.length && !idx && (o.number || o.name)) {   // no card list: TCGdex search first (fast, parallel)
+          setScanStep("Searching the backup card database…");
+          candidates = byText(await withTimeout(dexFind(o), 12000, "slow").catch(() => []));
+          if (candidates.length > 1) {   // no card list, but the candidates have pictures: order them by picture match
+            const sims = await Visual.compare(hi || shot, candidates.map(c => ({ b: {}, card: c }))).catch(() => null);
+            if (sims) candidates = candidates.map((c, i) => [c, sims[i] ?? -1]).sort((a, b) => b[1] - a[1]).map(x => x[0]);
+          }
+          confident = false;   // without the card list a match is always marked Check
+        }
+        if (!candidates.length && ENV.ptcg !== false && !ENV.ptcgSlow) {
           setScanStep("Looking up the card…");
           if (o.number && o.total) candidates = await searchCards(`number:${o.number} set.printedTotal:${o.total}`, 30).catch(() => []);
           if (!candidates.length && o.number) candidates = await searchCards(`number:${o.number}`, 60).catch(() => []);
           candidates = byText(candidates);
           if (candidates.length > 1 && o.total) { const f = candidates.filter(c => c.set.printedTotal == o.total); if (f.length) candidates = f; }
           if (!candidates.length && o.name) candidates = await searchCards(`name:"${o.name.split(" ")[0]}*"`, 12).catch(() => []);
-        }
-        if (!candidates.length && (o.number || o.name) && !idx) {
-          setScanStep("Checking the backup card database…");
-          candidates = byText(await dexFind(o).catch(() => []));
         }
         if (!candidates.length && !o.number && !o.name) note = "Couldn't read any text. Fill the frame with the card, avoid glare on the bottom line, and keep it sharp.";
       }
@@ -1108,7 +1142,9 @@ const Scan = {
     if (item && ai) { item.ai = { variantNote: ai.variantNote, gradeNote: ai.gradeNote, estGrade: ai.estGrade }; if (ai.estUSD && !item.prices?.tcg) item.aiEstUSD = ai.estUSD; }
     if (item) item.cond.foil = foil.kind !== "unknown" ? foil.kind : (ai && ai.foil) || null;
     if (confident === null) confident = candidates.length === 1 || !!ai;
-    const res = { state: item ? "found" : "miss", item, topCard: found, candidates: candidates.slice(1, 8), thumb, cond, note, confident, added: false };
+    T.mark("lookup");
+    const res = { state: item ? "found" : "miss", item, topCard: found, candidates: candidates.slice(1, 8), thumb, cond, note, confident, added: false, timing: T.text() };
+    console.info("PKmon scan timing:", res.timing, "| index:", CardIndex.status, CardIndex.cards ? CardIndex.cards.length : 0);
     if (!batch) setResult(res);
     if (!batch && !item && this.lastOCR && this.lastOCR.name) { const sb = $("#scanSearch"); if (sb) { sb.value = this.lastOCR.name + (this.lastOCR.number ? " " + this.lastOCR.number : ""); sb.dispatchEvent(new Event("input")); } }
     // stack mode adds every recognised card; an unsure one goes in as the best guess, flagged "Check"
@@ -1144,17 +1180,19 @@ const Visual = {
     return 1 - (dc * .7 + dh * .6);
   },
   load(url) {
-    return new Promise(res => { if (!url) return res(null); const im = new Image(); im.crossOrigin = "anonymous"; const t = setTimeout(() => res(null), 7000);
+    return new Promise(res => { if (!url) return res(null); const im = new Image(); im.crossOrigin = "anonymous"; const t = setTimeout(() => res(null), 4000);
       im.onload = () => { clearTimeout(t); res(im); }; im.onerror = () => { clearTimeout(t); res(null); }; im.src = url; });
   },
   async compare(photo, ranked) {
     if (ENV.claude || !navigator.onLine) return null;   // the artifact frame can't load outside images
-    const me = this.feat(photo);
-    return Promise.all(ranked.map(async r => {
+    const me = this.feat(photo), out = ranked.map(() => null);
+    // all pictures load in parallel; whatever has arrived after 8 s is used
+    const jobs = ranked.map(async (r, i) => {
       const urls = [r.b.img ? r.b.img + "/low.webp" : null, r.card && r.card.images && r.card.images.small].filter(Boolean);
-      for (const u of urls) { const im = await this.load(u); if (!im) continue; try { return this.sim(me, this.feat(im)); } catch { /* image not readable (CORS); try the next */ } }
-      return null;
-    }));
+      for (const u of urls) { const im = await this.load(u); if (!im) continue; try { out[i] = this.sim(me, this.feat(im)); return; } catch { /* image not readable (CORS); try the next */ } }
+    });
+    await Promise.race([Promise.all(jobs), sleep(8000)]);
+    return out;
   }
 };
 /* ---- Local card index: every card's id, number and name from TCGdex, kept on the device (Cache Storage) ----
@@ -1163,16 +1201,26 @@ const CardIndex = {
   cards: null, sets: null, loading: null, KEY: "https://pkmon.local/index-v1.json",
   norm: s => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]/g, ""),
   tri: s => { const t = new Set(); for (let i = 0; i + 3 <= s.length; i++) t.add(s.slice(i, i + 3)); return t; },
+  status: "idle", pct: 0, failedAt: 0, ms: 0,
   async load() {
     if (this.cards) return this;
     if (this.loading) return this.loading;
+    if (this.failedAt && Date.now() - this.failedAt < 120000) return null;   // failed recently: don't make every card wait again
+    this.status = "loading"; this.pct = 0; const t0 = performance.now();
     this.loading = (async () => {
       let data = null;
       try { const c = await caches.open("pkmon-index"); const r = await c.match(this.KEY); if (r) { const d = await r.json(); if (Date.now() - d.t < 7 * 864e5) data = d; } } catch { /* no Cache Storage */ }
       if (!data) {
         if (!navigator.onLine) return null;
-        const get = async u => { const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 45000); try { const r = await fetch(DEX + u, { signal: ctrl.signal }); if (!r.ok) throw new Error(r.status); return await r.json(); } finally { clearTimeout(t); } };
-        const [cards, sets] = await Promise.all([get("/cards"), get("/sets")]);
+        // stream the big list so the scanner can show download progress
+        const get = async (u, track) => { const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 90000);
+          try { const r = await fetch(DEX + u, { signal: ctrl.signal }); if (!r.ok) throw new Error("card list answered " + r.status);
+            if (!track || !r.body || !r.body.getReader) return await r.json();
+            const total = +r.headers.get("content-length") || 3.5e6, rd = r.body.getReader(), chunks = []; let got = 0;
+            for (;;) { const { done, value } = await rd.read(); if (done) break; chunks.push(value); got += value.length; this.pct = Math.min(99, Math.round(got / total * 100)); }
+            return JSON.parse(new TextDecoder().decode(await new Blob(chunks).arrayBuffer()));
+          } finally { clearTimeout(t); } };
+        const [cards, sets] = await Promise.all([get("/cards", true), get("/sets")]);
         data = { t: Date.now(), cards: cards.map(c => [c.id, c.localId, c.name, c.image || ""]), sets: sets.map(x => [x.id, x.name, x.cardCount && x.cardCount.official, x.cardCount && x.cardCount.total]) };
         try { const c = await caches.open("pkmon-index"); await c.put(this.KEY, new Response(JSON.stringify(data), { headers: { "content-type": "application/json" } })); } catch { /* keep in memory only */ }
       }
@@ -1181,8 +1229,9 @@ const CardIndex = {
         const sid = id.slice(0, id.lastIndexOf("-")), n = this.norm(name);
         return { id, lid: String(lid), num: normNum(lid), name, n, tri: this.tri(n), img, sid };
       });
+      this.status = "ready"; this.pct = 100; this.ms = Math.round(performance.now() - t0);
       return this;
-    })().catch(e => { console.warn("index", e); this.loading = null; return null; });
+    })().catch(e => { console.warn("index", e); this.loading = null; this.status = "failed"; this.failedAt = Date.now(); this.err = e.message || String(e); return null; });
     return this.loading;
   },
   /* score every card: number + set total + how much of the name the reader saw */
@@ -1226,14 +1275,16 @@ const CardIndex = {
 };
 /* full card data for index entries: pokemontcg.io first (same ids for most sets), TCGdex for the rest */
 async function detailsFor(entries) {
+  // ask TCGdex and pokemontcg.io at the same time; never wait more than ~1.5 s for pokemontcg.io after TCGdex answers
   const ids = entries.map(e => e.id);
-  const pt = ENV.ptcg !== false ? await withTimeout(cardsByIds(ids), 25000, "slow").catch(() => []) : [];
+  let pt = [];
+  const ptP = ENV.ptcg !== false && !ENV.ptcgSlow
+    ? withTimeout(cardsByIds(ids), 8000, "slow").then(r => pt = r).catch(e => { if (e && e.message === "slow") ENV.ptcgSlow = true; })
+    : Promise.resolve();
+  const dex = await Promise.all(entries.map(async e => { try { return mapDex(await dexGet("/cards/" + encodeURIComponent(e.id), undefined, 8000)); } catch { return null; } }));
+  await Promise.race([ptP, sleep(1500)]);
   const m = new Map(pt.map(c => [c.id, c]));
-  return Promise.all(entries.map(async e => {
-    if (m.has(e.id)) return m.get(e.id);
-    try { return mapDex(await dexGet("/cards/" + encodeURIComponent(e.id))); }
-    catch { return mapDex({ id: e.id, localId: e.lid, name: e.name, image: e.img, set: { id: e.sid, name: (CardIndex.sets.get(e.sid) || {}).name || e.sid, cardCount: { official: (CardIndex.sets.get(e.sid) || {}).off } } }); }
-  }));
+  return entries.map((e, i) => m.get(e.id) || dex[i] || mapDex({ id: e.id, localId: e.lid, name: e.name, image: e.img, set: { id: e.sid, name: (CardIndex.sets.get(e.sid) || {}).name || e.sid, cardCount: { official: (CardIndex.sets.get(e.sid) || {}).off } } }));
 }
 /* several cards side by side (or stacked) in one photo → one crop per card */
 async function splitCards(bmp) {
@@ -1332,7 +1383,12 @@ function nameInText(name, text) {
 }
 function withTimeout(pr, ms, msg) { let t; return Promise.race([pr, new Promise((_, rej) => { t = setTimeout(() => rej(new Error(msg)), ms); })]).finally(() => clearTimeout(t)); }
 function setScanStepBatch() { /* batch view keeps its own counter */ }
-function setScanStep(msg) { const r = $("#resultBox .scanstep"); if (r) r.textContent = msg; }
+function mkTimer() {
+  const t0 = performance.now(); let last = t0; const parts = {};
+  return { mark(k) { const n = performance.now(); parts[k] = (parts[k] || 0) + (n - last); last = n; },
+    text() { const f = v => (v / 1000).toFixed(1) + " s"; return `${f(performance.now() - t0)} · ` + Object.entries(parts).map(([k, v]) => `${k} ${f(v)}`).join(" · ") + (CardIndex.status !== "ready" ? ` · card list: ${CardIndex.status}` : ""); } };
+}
+function setScanStep(msg) { const b = $("#batchStep"); if (b) { b.innerHTML = ""; b.append(h("span", { class: "spin" }), " " + msg); } const r = $("#resultBox .scanstep"); if (r) r.textContent = msg; }
 
 /* Claude vision (artifact viewer): identify + variant + grading read, strict JSON */
 async function claudeIdentify(shot, foil) {
@@ -1626,13 +1682,15 @@ function setResult(r) {
       renderTray(); beep(); setResult(r);
     };
     box.append(h("div", { class: "row between" }, h("h2", {}, `${r.total} card${r.total > 1 ? "s" : ""} in this scan`),
-      h("span", { class: "small muted" }, `${sure} sure · ${chk} to check · ${miss} not found${res.length < r.total ? ` · reading ${res.length + 1} of ${r.total}…` : ""}`)));
+      h("span", { class: "small muted" }, `${sure} sure · ${chk} to check · ${miss} not found${res.length < r.total ? ` · reading ${res.length + 1} of ${r.total}…` : Scan.batchT0 ? ` · took ${((performance.now() - Scan.batchT0) / 1000).toFixed(0)} s` : ""}`)));
+    if (res.length < r.total) box.append(h("div", { class: "small", id: "batchStep", style: "margin-top:6px" }, h("span", { class: "spin" }), " Starting…"));
     if (chk && S.settings.stack) box.append(h("p", { class: "small muted", style: "margin:4px 0 0" }, "Unsure cards were added as the best guess, marked Check. Tap the right card to fix one."));
     const list = h("div", { class: "stack", style: "margin-top:10px;gap:12px" });
     res.forEach((x, i) => {
       const head = h("div", { class: "row", style: "gap:10px;flex-wrap:nowrap" }, h("img", { src: x.thumb, alt: "", style: "width:44px;border-radius:5px;border:1px solid var(--edge)" }),
         h("div", { style: "min-width:0;flex:1" }, h("div", { class: "nm", style: "font-weight:700" }, x.item ? x.item.name : `Card ${i + 1}: not recognised`),
-          h("div", { class: "small muted" }, x.item ? `${x.item.setName || ""} · ${x.item.number || "?"}${x.item.printedTotal ? "/" + x.item.printedTotal : ""}` : (x.note || "Search for it by name below."))),
+          h("div", { class: "small muted" }, x.item ? `${x.item.setName || ""} · ${x.item.number || "?"}${x.item.printedTotal ? "/" + x.item.printedTotal : ""}` : (x.note || "Search for it by name below.")),
+          x.timing ? h("div", { class: "small muted num", style: "font-size:11px;opacity:.8" }, x.timing) : null),
         x.item ? (x.confident ? h("span", { class: "chip good" }, x.added ? "✓ Added" : "Sure") : h("span", { class: "chip", style: "color:var(--warn)" }, x.added ? "Added · Check" : "Check")) : null,
         x.item && !x.added ? h("button", { class: "btn sm", onclick: () => { addItem(x.item, { quiet: true }); S.stackSession.unshift(x.item); x.added = true; renderTray(); setResult(r); } }, "Add") : null,
         x.item && x.added ? h("button", { class: "btn sm ghost", title: "Change this card", onclick: () => openReplace(S.items.find(i => i.id === x.item.id) || x.item) }, "Change") : null);
@@ -1703,6 +1761,7 @@ function setResult(r) {
         h("div", { class: "row", style: "gap:14px;margin-top:4px" },
           h("div", {}, h("div", { class: "eyebrow" }, "Raw value"), h("div", { class: "num", style: "font-size:20px;font-weight:700" }, money(rawUSD(it))), it.prices.src === "ai" ? h("div", { class: "est" }, "AI estimate") : null),
           h("div", {}, h("div", { class: "eyebrow" }, "If PSA 10"), h("div", { class: "num", style: "font-size:20px;font-weight:700" }, money(gradedUSD(rawUSD(it), "PSA", 10))), h("div", { class: "est" }, "Model estimate"))))),
+    r.timing ? h("p", { class: "small muted num", style: "margin:8px 0 0;font-size:11px" }, "Scan took " + r.timing) : null,
     it.ai && it.ai.gradeNote ? h("p", { class: "small muted", style: "margin:10px 0 0" }, "Claude: " + it.ai.gradeNote + (it.ai.estGrade ? ` (est. ${it.ai.estGrade})` : "")) : null,
     h("div", { style: "margin-top:12px" }, gb),
     h("div", { class: "row", style: "margin-top:12px" },
@@ -2468,7 +2527,10 @@ function viewSettings() {
         h("div", { class: "row" }, h("span", { class: "mode" + (ENV.online || ENV.claude ? "" : " off") }, h("b", {}), env)),
         h("table", { class: "t" }, h("tbody", {},
           capRow("Live prices (TCGplayer, Cardmarket)", ENV.online), capRow("Live camera & stack scanning", !ENV.claude && ENV.camera), capRow("Name/number OCR", ENV.online && !ENV.claude),
-          capRow("Claude vision card ID", !!(ENV.cap.sample && ENV.aiImages)), capRow("Cloud-saved collection", !!userRoot()), capRow("Live exchange rates", !!(S.rates && S.rates.src)))),
+          capRow("Claude vision card ID", !!(ENV.cap.sample && ENV.aiImages)), capRow("Cloud-saved collection", !!userRoot()), capRow("Live exchange rates", !!(S.rates && S.rates.src)),
+          h("tr", {}, h("td", {}, "Card list (for recognition)"), h("td", { class: "n " + (CardIndex.cards ? "up" : "muted") },
+            CardIndex.cards ? `${CardIndex.cards.length.toLocaleString()} cards` : CardIndex.status === "loading" ? `Downloading ${CardIndex.pct}%` : ENV.claude ? "Not here" : "Not loaded")))),
+        !ENV.claude && !CardIndex.cards ? h("button", { class: "btn sm", onclick: async e => { const b = e.currentTarget; b.disabled = true; b.textContent = "Downloading…"; CardIndex.failedAt = 0; CardIndex.stalled = false; const ok = await CardIndex.load(); toast(ok ? `Card list ready: ${CardIndex.cards.length.toLocaleString()} cards` : "Card list didn't download: " + (CardIndex.err || "check your connection"), ok ? "" : "bad"); render(); } }, "Download card list now") : null,
         h("p", { class: "small muted", style: "margin:0" }, ENV.claude ? "Inside Claude the page can't reach the internet, so prices come from your last web sync or Claude's estimate. Open the web version for live prices, then move your vault across with Backup and Restore." : "Inside Claude you also get Claude vision card ID and a cloud-saved vault."),
         h("a", { class: "btn sm", href: PUBLIC_URL, target: "_blank", rel: "noopener" }, "Open the web version ↗"))),
     h("div", { class: "grid2" },
