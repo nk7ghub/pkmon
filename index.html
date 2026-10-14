@@ -207,6 +207,19 @@ h3{font-size:14px;font-weight:700}
 .sheet.glass{background:linear-gradient(155deg,color-mix(in srgb,var(--bg) 82%,var(--glass-hi)),color-mix(in srgb,var(--bg) 94%,transparent))}
 @media (min-width:800px){.scrim{align-items:center}.sheet{border-radius:26px;max-height:88%}}
 @keyframes up{from{transform:translateY(40px);opacity:.3}}
+.checkbar{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border-radius:14px;border:1px solid color-mix(in srgb,var(--warn) 55%,transparent);background:color-mix(in srgb,var(--warn) 12%,transparent)}
+.checkbar.calm{border-color:var(--edge);background:var(--glass-lo)}
+button.chip.chk{color:var(--warn);cursor:pointer;font:inherit;font-size:11.5px;font-weight:700}
+@media (max-width:460px){
+  .top{gap:6px;padding:8px 10px;margin:8px 8px 0}
+  .top .icon-btn{width:34px;height:34px}
+  .top .sel{padding:7px 22px 7px 8px;background-position:calc(100% - 12px) 52%,calc(100% - 7px) 52%}
+  .brand{font-size:15px;gap:6px} .brand svg{width:24px;height:24px}
+  .mode span{display:none} .mode{padding:4px 6px} .mode b{margin-right:0}
+}
+.sheet-top{display:flex;align-items:center;justify-content:space-between;margin:-6px 0 8px}
+.sheet-top .grab{margin:0}
+#backBtn svg{width:20px;height:20px}
 .grab{width:42px;height:5px;border-radius:5px;background:var(--edge);margin:0 auto 12px}
 .detail-hero{display:grid;grid-template-columns:minmax(0,180px) 1fr;gap:18px;align-items:start}
 @media (max-width:520px){.detail-hero{grid-template-columns:1fr}.detail-hero .holo{max-width:220px;margin-inline:auto}}
@@ -274,6 +287,7 @@ body.dropping .stage{outline:3px dashed var(--water);outline-offset:4px}
 <div class="aura" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
 <div class="app">
   <header class="top glass flat">
+    <button class="icon-btn" id="backBtn" aria-label="Back" title="Back" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
     <div class="brand">
       <svg viewBox="0 0 32 32" aria-hidden="true"><defs><linearGradient id="lg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#FF6B9F"/><stop offset=".5" stop-color="#FFD23F"/><stop offset="1" stop-color="#4FB3FF"/></linearGradient></defs><rect x="6" y="2.5" width="20" height="27" rx="3.5" fill="url(#lg)"/><rect x="9" y="6" width="14" height="11" rx="1.5" fill="#fff" opacity=".85"/><circle cx="16" cy="11.5" r="3" fill="#E8361A"/><rect x="9" y="20" width="14" height="2" rx="1" fill="#fff" opacity=".85"/><rect x="9" y="24" width="8" height="2" rx="1" fill="#fff" opacity=".7"/></svg>
       <span>PKmon</span>
@@ -360,9 +374,27 @@ function dbWrite(path, fn) {
   return next;
 }
 function userRoot() { return ENV.cap.db && ENV.uid ? ENV.cap.db.doc("data/users/" + ENV.uid + "/vault") : null; }
+/* cards added from the local card list have no prices yet: fetch them in one batch shortly after */
+const PriceQueue = {
+  ids: new Set(), tried: new Set(), timer: null,
+  add(it) {
+    if (!it || it.kind !== "card" || !it.cardId || String(it.cardId).startsWith("dex:") || (it.prices && (it.prices.tcg || it.prices.cm)) || this.tried.has(it.cardId)) return;
+    this.ids.add(it.cardId); this.tried.add(it.cardId); clearTimeout(this.timer); this.timer = setTimeout(() => this.run(), 1500);
+  },
+  async run() {
+    const ids = [...this.ids]; this.ids.clear(); if (!ids.length || ENV.claude || ENV.ptcg === false) return;
+    const cards = await withTimeout(cardsByIds(ids), 25000, "slow").catch(() => []);
+    if (!cards.length) { ids.forEach(i => this.tried.delete(i)); return; }   // try again on the next add or price refresh
+    const map = new Map(cards.map(c => [c.id, c]));
+    for (const it of S.items) { const c = map.get(it.cardId); if (!c || (it.prices && (it.prices.tcg || it.prices.cm))) continue;
+      const fresh = itemFromCard(c, { variant: it.variant, foilGuess: it.cond && it.cond.foil });
+      Object.assign(it, { prices: fresh.prices, variant: fresh.variant, rarity: it.rarity || fresh.rarity, setCode: fresh.setCode || it.setCode }); Store.saveItem(it); }
+    snapshotHistory(); render(); renderTray();
+  }
+};
 const Store = {
   saveItem(it) {
-    LS.set("items", S.items);
+    LS.set("items", S.items); PriceQueue.add(it);
     const root = userRoot(); if (!root) return;
     const ref = root.collection("items").doc(it.id);
     dbWrite(ref.path, () => ref.set(JSON.parse(JSON.stringify(it))));
@@ -1015,16 +1047,24 @@ const Scan = {
     if (!num) num = parseCardNumber(full);
     text = nameT + "\n" + text + "\n" + full;
     const hpM = (nameT + " " + full).toUpperCase().replace(/O/g, "0").match(/HP\s?(\d{2,3})\b/);
-    const STOP = /^(VMAX|VSTAR|BASIC|STAGE|EVOLVES|FROM|ABILITY|POKEMON|POKÉMON|TRAINER|ITEM|SUPPORTER|RULE)$/i;
-    const name = (nameT.match(/[A-Za-zÀ-ÿ'’.\-]{4,}/g) || []).filter(x => !STOP.test(x)).sort((a, b) => b.length - a.length).slice(0, 1).join(" ");
+    // HP candidates: round numbers 30–340 in the name strip ("250" next to the name)
+    const hps = [...new Set([...(nameT.toUpperCase().replace(/O/g, "0").matchAll(/(\d{2,3})/g))].map(m => +m[1]).filter(v => v >= 30 && v <= 340 && v % 10 === 0))];
+    if (hpM) hps.push(+hpM[1]);
+    // "Evolves from Shaymin V" names the card BEFORE this one: keep it as a clue, but out of the name
+    const evoM = (nameT + "\n" + full).match(/evolve[sd]?\s*fr[o0]m\s*([^\n]{3,26})/i);
+    const nameText = nameT.split("\n").map(l => l.replace(/evolve[sd]?\s*fr[o0]m.*$/i, "").replace(/put\s+.*$/i, "")).join("\n");
+    const STOP = /^(VMAX|VSTAR|STAR|BASIC|STAGE|EVOLVES|FROM|ABILITY|POKEMON|POKÉMON|TRAINER|ITEM|SUPPORTER|RULE|STADIUM|TOOL)$/i;
+    const names = [...new Set((nameText.match(/[A-Za-zÀ-ÿ'’.\-]{4,}/g) || []).filter(x => !STOP.test(x)))];
     const raw = text.replace(/\s+/g, " ").trim();
-    return { name, number: num && num.number, total: num && num.total, nums: numberCandidates(text), hp: hpM ? +hpM[1] : null, top: nameT, full: text, text: text.toLowerCase(), raw };
+    return { name: names[0] || "", names: names.slice(0, 4), number: num && num.number, total: num && num.total, nums: numberCandidates(text), hp: hpM ? +hpM[1] : null, hps,
+      evo: evoM ? evoM[1] : "", nameText, top: nameT, full: text, text: text.toLowerCase(), raw };
   },
   async identify(shot, gr, foil, auto, hi, batch = false) {
     const thumb = (() => { const t = document.createElement("canvas"); t.width = 126; t.height = 176; t.getContext("2d").drawImage(shot, 0, 0, 126, 176); return t.toDataURL("image/jpeg", .72); })();
     const cond = { corners: +gr.corners.toFixed(1), edges: +gr.edges.toFixed(1), surface: +gr.surface.toFixed(1), centering: +gr.centering.toFixed(1), overall: Math.round(gr.overall * 2) / 2, lr: Math.round(gr.lr), tb: Math.round(gr.tb), by: "pixels" };
     if (batch) setScanStepBatch(); else setResult({ state: "working", thumb, cond });
-    let found = null, candidates = [], ai = null, note = "", confident = null;
+    let found = null, candidates = [], ai = null, note = "", confident = null, weak = false;
+    const tm = {}, tStart = performance.now();
     try {
       if (ENV.cap.sample && ENV.aiImages) {
         ai = await claudeIdentify(shot, foil);
@@ -1034,57 +1074,63 @@ const Scan = {
         }
       } else if (navigator.onLine) {
         setScanStep("Reading the card number and name…");
+        const t0 = performance.now();
         const o = await this.ocrRead(hi || shot);
+        tm.read = performance.now() - t0;
         this.lastOCR = o;
         note = o.number ? `Read #${o.number}${o.total ? "/" + o.total : ""}${o.name ? " · " + o.name : ""}` : (o.raw ? "Read: " + o.raw.slice(0, 60) : "");
         const byText = list => { if (list.length < 2 || !o.text) return list; const f = list.filter(c => nameInText(c.name, o.text)); return f.length ? f : list; };
-        setScanStep("Matching against the card index…");
+        setScanStep("Matching against the card list…");
+        const t1 = performance.now();
         const idx = await CardIndex.load().catch(() => null);
+        tm.list = performance.now() - t1;
         if (idx && (o.number || o.text)) {
-          // strong text read → top 12; weak read → a wider pool of 40 so the picture check can find the card
+          // strong text read → top 12; weak read → a wider pool so the picture check can find the card
           const strict = CardIndex.rank(o); let ranked, relaxed = false;
-          if (!strict.length) { ranked = CardIndex.rank(o, 12).slice(0, 40); relaxed = true; }
-          else if (strict[0].score < 60) ranked = CardIndex.rank(o, 12).slice(0, 40);
+          if (!strict.length) { ranked = CardIndex.rank(o, 12).slice(0, 20); relaxed = true; }
+          else if (strict[0].score < 60) ranked = CardIndex.rank(o, 12).slice(0, 20);
           else ranked = strict.slice(0, 12);
           // other prints with the same name (regular / full art / rainbow / gallery) so the picture check can tell them apart
           const top3 = new Set(ranked.slice(0, 3).map(r => r.b.n));
-          for (const c of CardIndex.cards) { if (ranked.length >= 46) break; if (top3.has(c.n) && !ranked.some(r => r.b === c)) ranked.push({ b: c, score: Math.max(0, ranked.find(r => r.b.n === c.n).score - 30), why: ["same name"] }); }
+          for (const c of CardIndex.cards) { if (ranked.length >= 28) break; if (top3.has(c.n) && !ranked.some(r => r.b === c)) ranked.push({ b: c, score: Math.max(0, ranked.find(r => r.b.n === c.n).score - 30), why: ["same name"] }); }
           if (ranked.length) {
-            // 1) picture check on the whole pool (official images from the index)
+            // picture check on the pool (official images), 8 s at most
             setScanStep(`Comparing card pictures (${ranked.length})…`);
-            const sims = await Visual.compare(hi || shot, ranked).catch(() => null);
+            const t2 = performance.now();
+            const sims = await withTimeout(Visual.compare(hi || shot, ranked), 8000, "slow").catch(() => null);
+            tm.pics = performance.now() - t2;
             if (sims) { const ok = sims.filter(v => v != null);
               if (ok.length >= 2) { const mn = Math.min(...ok), mx = Math.max(...ok);
                 if (mx - mn > .03) ranked.forEach((r, i) => { if (sims[i] == null) return; const b = 45 * (sims[i] - mn) / (mx - mn); r.score += b; r.vis = +sims[i].toFixed(3); if (b > 33) r.why.push("picture"); }); } }
             ranked.sort((a, b) => b.score - a.score); ranked = ranked.slice(0, 12);
-            // 2) real card data for the best 12: HP and attack names confirm or demote each match
-            setScanStep("Checking the best matches…");
-            const det = await detailsFor(ranked.map(r => r.b));
-            const txt = (o.text || "").replace(/[^a-z0-9]/g, "");
-            ranked.forEach((r, i) => { const c = det[i]; r.card = c; if (!c) return;
-              const digits = (o.full || "").toUpperCase().replace(/O/g, "0").replace(/[^0-9]/g, " ");
-              if (c.hp && ((o.hp && +c.hp === o.hp) || (+c.hp >= 30 && new RegExp("\\d?" + (+c.hp) + "\\d?").test(digits.replace(/\s+/g, " "))))) { r.score += 12; r.why.push("HP"); }
-              for (const a of [...(c.attacks || []), ...(c.abilities || [])]) { const an = CardIndex.norm(a.name); if (an.length >= 5 && txt.includes(an)) { r.score += 20; r.why.push("attack"); break; } } });
-            ranked.sort((a, b) => b.score - a.score);
-            candidates = ranked.filter(r => r.card).map(r => r.card);
             this.lastRank = ranked;
             const gap = ranked[1] ? ranked[0].score - ranked[1].score : 99;
             confident = !relaxed && ((ranked[0].score >= 90 && gap >= 12) || (ranked[0].score >= 65 && gap >= 25));
+            weak = ranked[0].score < 55;      // only a few letters matched: show the choices, don't add a guess
+            // prices only for the card shown first (8 s at most); the others come from the list and load prices when picked
+            setScanStep("Loading prices…");
+            const t3 = performance.now();
+            const [best] = await detailsFor([ranked[0].b]);
+            tm.prices = performance.now() - t3;
+            candidates = [best, ...ranked.slice(1).map(r => CardIndex.toCard(r.b))];
           }
         }
-        if (!candidates.length && ENV.ptcg !== false) {
+        if (!candidates.length && !idx && ENV.ptcg !== false) {
+          // no card list (rare): search pokemontcg.io by number, then by each word read near the name
           setScanStep("Looking up the card…");
-          if (o.number && o.total) candidates = await searchCards(`number:${o.number} set.printedTotal:${o.total}`, 30).catch(() => []);
-          if (!candidates.length && o.number) candidates = await searchCards(`number:${o.number}`, 60).catch(() => []);
-          candidates = byText(candidates);
+          const look = q => withTimeout(searchCards(q, 30), 10000, "slow").catch(() => []);
+          if (o.number && o.total) candidates = await look(`number:${o.number} set.printedTotal:${o.total}`);
+          if (!candidates.length && o.number) candidates = byText(await look(`number:${o.number}`));
+          for (const w of o.names || []) { if (candidates.length) break; candidates = await look(`name:"${w.replace(/[^A-Za-zÀ-ÿ'’.\-]/g, "").replace(/V[a-z]?$/, "")}*"`); }
           if (candidates.length > 1 && o.total) { const f = candidates.filter(c => c.set.printedTotal == o.total); if (f.length) candidates = f; }
-          if (!candidates.length && o.name) candidates = await searchCards(`name:"${o.name.split(" ")[0]}*"`, 12).catch(() => []);
         }
         if (!candidates.length && (o.number || o.name) && !idx) {
           setScanStep("Checking the backup card database…");
-          candidates = byText(await dexFind(o).catch(() => []));
+          for (const w of [o.name, ...(o.names || []).slice(1)].filter(Boolean)) { if (candidates.length) break; candidates = byText(await withTimeout(dexFind({ ...o, name: w.replace(/V[a-z]?$/, "") }), 12000, "slow").catch(() => [])); }
+          if (!candidates.length && o.number) candidates = byText(await withTimeout(dexFind({ ...o, name: "" }), 12000, "slow").catch(() => []));
         }
         if (!candidates.length && !o.number && !o.name) note = "Couldn't read any text. Fill the frame with the card, avoid glare on the bottom line, and keep it sharp.";
+        else if (!candidates.length && !idx) note += " · The card list didn't load (check your connection), so only a slower search was tried.";
       }
       found = candidates[0] || null;
     } catch (e) { note = e.message || String(e); }
@@ -1094,11 +1140,14 @@ const Scan = {
     if (item && ai) { item.ai = { variantNote: ai.variantNote, gradeNote: ai.gradeNote, estGrade: ai.estGrade }; if (ai.estUSD && !item.prices?.tcg) item.aiEstUSD = ai.estUSD; }
     if (item) item.cond.foil = foil.kind !== "unknown" ? foil.kind : (ai && ai.foil) || null;
     if (confident === null) confident = candidates.length === 1 || !!ai;
-    const res = { state: item ? "found" : "miss", item, topCard: found, candidates: candidates.slice(1, 8), thumb, cond, note, confident, added: false };
+    const sec = v => (v / 1000).toFixed(1) + " s";
+    const timing = tm.read == null ? "" : [sec(performance.now() - tStart), "read " + sec(tm.read), tm.list > 300 ? "card list " + sec(tm.list) : null, tm.pics != null ? "pictures " + sec(tm.pics) : null, tm.prices != null ? "prices " + sec(tm.prices) : null].filter(Boolean).join(" · ");
+    if (timing) console.info("PKmon scan:", timing, found ? found.name + " " + found.id : "not found");
+    const res = { state: item ? "found" : "miss", item, topCard: found, candidates: candidates.slice(1, 8), thumb, cond, note, confident, added: false, timing };
     if (!batch) setResult(res);
     if (!batch && !item && this.lastOCR && this.lastOCR.name) { const sb = $("#scanSearch"); if (sb) { sb.value = this.lastOCR.name + (this.lastOCR.number ? " " + this.lastOCR.number : ""); sb.dispatchEvent(new Event("input")); } }
     // stack mode adds every recognised card; an unsure one goes in as the best guess, flagged "Check"
-    if (item && (confident || S.settings.stack) && (auto || S.settings.stack)) {
+    if (item && (confident || (S.settings.stack && !weak)) && (auto || S.settings.stack)) {
       if (this.stream && this.lastAddedId === (item.cardId || item.name) && Date.now() - this.lastAddedAt < 6000) return res; // live-camera double-capture guard only
       if (!confident) item.check = true;
       addItem(item, { quiet: true }); S.stackSession.unshift(item); this.lastAddedId = item.cardId || item.name; this.lastAddedAt = Date.now();
@@ -1130,55 +1179,70 @@ const Visual = {
     return 1 - (dc * .7 + dh * .6);
   },
   load(url) {
-    return new Promise(res => { if (!url) return res(null); const im = new Image(); im.crossOrigin = "anonymous"; const t = setTimeout(() => res(null), 7000);
+    return new Promise(res => { if (!url) return res(null); const im = new Image(); im.crossOrigin = "anonymous"; const t = setTimeout(() => res(null), 4000);
       im.onload = () => { clearTimeout(t); res(im); }; im.onerror = () => { clearTimeout(t); res(null); }; im.src = url; });
   },
   async compare(photo, ranked) {
     if (ENV.claude || !navigator.onLine) return null;   // the artifact frame can't load outside images
     const me = this.feat(photo);
     return Promise.all(ranked.map(async r => {
-      const urls = [r.b.img ? r.b.img + "/low.webp" : null, r.card && r.card.images && r.card.images.small].filter(Boolean);
+      const urls = [r.b.img].filter(Boolean);
       for (const u of urls) { const im = await this.load(u); if (!im) continue; try { return this.sim(me, this.feat(im)); } catch { /* image not readable (CORS); try the next */ } }
       return null;
     }));
   }
 };
-/* ---- Local card index: every card's id, number and name from TCGdex, kept on the device (Cache Storage) ----
-   Ranking is local, so a half-read name ("ikachuVI") or a lone number still finds the card. */
+/* ---- Card list: every English card (number, name, HP, attacks, picture) shipped with the app as pkmon-cards.json ----
+   Built from the public pokemontcg.io data (tools/build-cards.py). Loaded once from our own site, kept in Cache Storage,
+   so matching needs no outside server. Ranking is local, so a half-read name ("ikachuVI") or a lone number still finds the card. */
+const CARDS_URL = "pkmon-cards.json", CARDS_V = "2026-09-16";
 const CardIndex = {
-  cards: null, sets: null, loading: null, KEY: "https://pkmon.local/index-v1.json",
+  cards: null, sets: null, loading: null, failedAt: 0, v: null, KEY: "https://pkmon.local/cards-" + CARDS_V + ".json",
   norm: s => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]/g, ""),
   tri: s => { const t = new Set(); for (let i = 0; i + 3 <= s.length; i++) t.add(s.slice(i, i + 3)); return t; },
   async load() {
     if (this.cards) return this;
     if (this.loading) return this.loading;
+    if (Date.now() - this.failedAt < 60000) return null;      // failed a moment ago: don't make every card wait again
     this.loading = (async () => {
-      let data = null;
-      try { const c = await caches.open("pkmon-index"); const r = await c.match(this.KEY); if (r) { const d = await r.json(); if (Date.now() - d.t < 7 * 864e5) data = d; } } catch { /* no Cache Storage */ }
+      let data = null, cache = null;
+      try { cache = await caches.open("pkmon-index"); const r = await cache.match(this.KEY); if (r) data = await r.json(); } catch { /* no Cache Storage */ }
       if (!data) {
-        if (!navigator.onLine) return null;
-        const get = async u => { const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 45000); try { const r = await fetch(DEX + u, { signal: ctrl.signal }); if (!r.ok) throw new Error(r.status); return await r.json(); } finally { clearTimeout(t); } };
-        const [cards, sets] = await Promise.all([get("/cards"), get("/sets")]);
-        data = { t: Date.now(), cards: cards.map(c => [c.id, c.localId, c.name, c.image || ""]), sets: sets.map(x => [x.id, x.name, x.cardCount && x.cardCount.official, x.cardCount && x.cardCount.total]) };
-        try { const c = await caches.open("pkmon-index"); await c.put(this.KEY, new Response(JSON.stringify(data), { headers: { "content-type": "application/json" } })); } catch { /* keep in memory only */ }
+        const base = /^https?:/.test(location.protocol) ? new URL(CARDS_URL, location.href).href : PUBLIC_URL + CARDS_URL;
+        const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 30000);
+        try { const r = await fetch(base + "?v=" + CARDS_V, { signal: ctrl.signal }); if (!r.ok) throw new Error("card list " + r.status); data = await r.json(); }
+        finally { clearTimeout(t); }
+        try { if (cache) { for (const k of await cache.keys()) await cache.delete(k); await cache.put(this.KEY, new Response(JSON.stringify(data), { headers: { "content-type": "application/json" } })); } } catch { /* keep in memory only */ }
       }
-      this.sets = new Map(data.sets.map(([id, name, off, tot]) => [id, { name, off, tot }]));
-      this.cards = data.cards.map(([id, lid, name, img]) => {
-        const sid = id.slice(0, id.lastIndexOf("-")), n = this.norm(name);
-        return { id, lid: String(lid), num: normNum(lid), name, n, tri: this.tri(n), img, sid };
+      this.v = data.v;
+      const sets = data.sets.map(([id, name, series, off, tot, date]) => ({ id, name, series, off, tot, date }));
+      this.sets = new Map(sets.map(s => [s.id, s]));
+      this.cards = data.cards.map(([si, lid, name, hp, moves, evo, rarity, ik, oid]) => {
+        const st = sets[si], id = oid || st.id + "-" + lid, n = this.norm(name);
+        const img = ik === 1 ? `https://images.scrydex.com/pokemon/${id}/small` : typeof ik === "string" ? ik : `https://images.pokemontcg.io/${st.id}/${lid}.png`;
+        const imgL = ik === 1 ? `https://images.scrydex.com/pokemon/${id}/large` : typeof ik === "string" ? ik : `https://images.pokemontcg.io/${st.id}/${lid}_hires.png`;
+        return { id, lid: String(lid), num: normNum(lid), name, n, tri: this.tri(n), hp: hp || null, moves: moves ? moves.split("|") : [], evo: this.norm(evo), rarity, img, imgL, sid: st.id };
       });
       return this;
-    })().catch(e => { console.warn("index", e); this.loading = null; return null; });
+    })().catch(e => { console.warn("card list", e); this.loading = null; this.failedAt = Date.now(); return null; });
     return this.loading;
   },
-  /* score every card: number + set total + how much of the name the reader saw */
+  /* a card object in the pokemontcg.io shape, built from the list alone (prices are added later) */
+  toCard(b) {
+    const st = this.sets.get(b.sid) || {};
+    return { id: b.id, name: b.name, number: b.lid, rarity: b.rarity || "", subtypes: [], supertype: "", hp: b.hp ? String(b.hp) : null,
+      attacks: b.moves.map(name => ({ name })), set: { id: b.sid, name: st.name || b.sid, series: st.series || "", printedTotal: st.off || null, total: st.tot || null, ptcgoCode: "" },
+      images: { small: b.img, large: b.imgL }, tcgplayer: null, cardmarket: null, local: true };
+  },
+  /* score every card: number + set total + name + HP + attack names + "evolves from" */
   rank(o, minScore = 25) {
-    const top = this.norm(o.top || o.name || ""), all = this.norm(o.full || o.text || "");
+    const top = this.norm(o.nameText || o.top || o.name || ""), all = this.norm(o.full || o.text || "");
     const tTop = this.tri(top), tAll = this.tri(all);
     const num = o.number ? normNum(o.number) : null, tot = o.total || null, gallery = num && /^(TG|GG|SV)/.test(num);
     // fuzzy number pairs (e.g. "1157/1725" → 157/172) only count when a real set has that size
     const pairs = new Map(); for (const q of o.nums || []) { if (!pairs.has(q.number)) pairs.set(q.number, new Set()); pairs.get(q.number).add(q.total); }
-    const sfx = { vmax: /vmax/.test(top), vstar: /vstar/.test(top), gx: /gx/.test(top) };
+    const sfx = { vmax: /vmax/.test(top), vstar: /v?star/.test(top), gx: /gx/.test(top) };
+    const hps = new Set(o.hps || []), evo = this.norm(o.evo || ""), evoT = this.tri(evo);
     const out = [];
     for (const c of this.cards) {
       let s = 0, why = [];
@@ -1192,11 +1256,20 @@ const CardIndex = {
         const st = this.sets.get(c.sid);
         if (tot && st && (st.off == tot || (gallery && (tot === 30 || tot === 70 || st.tot == tot)))) { s += 25; why.push("set size"); }
       }
+      let named = false;
       if (c.tri.size) {
         let hitT = 0, hitA = 0; for (const g of c.tri) { if (tTop.has(g)) hitT++; if (tAll.has(g)) hitA++; }
         const lenW = Math.min(1, c.n.length / 6);
         const sim = Math.max(hitT / c.tri.size, .75 * hitA / c.tri.size) * lenW + (top.includes(c.n) && c.n.length >= 4 ? .15 : 0);
-        if (sim > .34) { s += 40 * Math.min(1, sim) + Math.min(10, hitT * .6); why.push("name"); }   // more letters seen = more evidence (breaks "Acerola" vs "Acerola's Premonition")
+        if (sim > .34) { s += 40 * Math.min(1, sim) + Math.min(10, Math.max(hitT, hitA * .75) * .6); why.push("name"); named = true; }   // more letters seen = more evidence (breaks "Acerola" vs "Acerola's Premonition")
+      }
+      // the rest only confirms a card the number or name already points at
+      if (s >= 20) {
+        if (c.hp && hps.has(c.hp)) { s += 12; why.push("HP"); }
+        let mv = 0; for (const m of c.moves) { const mn = this.norm(m); if (mn.length >= 5 && all.includes(mn)) mv++; }
+        if (mv) { s += 20 + 8 * (mv - 1); why.push("attack"); }
+        if (evo && c.evo) { let hit = 0; for (const g of this.tri(c.evo)) if (evoT.has(g)) hit++; if (hit / Math.max(1, this.tri(c.evo).size) >= .6) { s += 12; why.push("evolves from"); } }
+        if (evo && named && c.n === evo) s -= 18;        // "Evolves from Shaymin V" is printed on Shaymin VSTAR, not on Shaymin V
       }
       if (s >= minScore) out.push({ b: c, score: s, why });
     }
@@ -1210,16 +1283,15 @@ const CardIndex = {
       .filter(x => x.s >= .6).sort((a, b) => b.s - a.s || a.c.n.length - b.c.n.length).slice(0, max).map(x => x.c);
   }
 };
-/* full card data for index entries: pokemontcg.io first (same ids for most sets), TCGdex for the rest */
-async function detailsFor(entries) {
+/* prices for list entries from pokemontcg.io (same ids), with a time limit; the list's own data fills in when it's slow */
+async function detailsFor(entries, ms = 8000) {
   const ids = entries.map(e => e.id);
-  const pt = ENV.ptcg !== false ? await withTimeout(cardsByIds(ids), 25000, "slow").catch(() => []) : [];
+  let pt = [];
+  if (ENV.ptcg !== false && Date.now() > (ENV.ptcgSlowUntil || 0)) {
+    pt = await withTimeout(cardsByIds(ids), ms, "slow").catch(e => { if (e && e.message === "slow") ENV.ptcgSlowUntil = Date.now() + 5 * 6e4; return []; });
+  }
   const m = new Map(pt.map(c => [c.id, c]));
-  return Promise.all(entries.map(async e => {
-    if (m.has(e.id)) return m.get(e.id);
-    try { return mapDex(await dexGet("/cards/" + encodeURIComponent(e.id))); }
-    catch { return mapDex({ id: e.id, localId: e.lid, name: e.name, image: e.img, set: { id: e.sid, name: (CardIndex.sets.get(e.sid) || {}).name || e.sid, cardCount: { official: (CardIndex.sets.get(e.sid) || {}).off } } }); }
-  }));
+  return entries.map(e => m.get(e.id) || CardIndex.toCard(e));
 }
 /* several cards side by side (or stacked) in one photo → one crop per card */
 async function splitCards(bmp) {
@@ -1513,15 +1585,17 @@ function chipsFor(it) {
   if (/holo/i.test(it.variant)) out.push(h("span", { class: "chip foil" }, VARIANT_LABEL[it.variant] || it.variant));
   if ((it.tags || []).includes("secret")) out.push(h("span", { class: "chip secret" }, "Secret rare"));
   if ((it.tags || []).includes("alt")) out.push(h("span", { class: "chip alt" }, "Alt art"));
-  if (it.check) out.push(h("span", { class: "chip", style: "color:var(--warn)", title: "Added as the best guess. Open it to confirm or change." }, "Check"));
+  if (it.check) out.push(h("button", { class: "chip chk", title: "Added as the best guess. Tap to confirm or change.", onclick: e => { e.stopPropagation(); openReplace(it); } }, "Check ›"));
   if (it.grade && it.grade.co && it.grade.co !== "RAW") out.push(h("span", { class: "chip" }, `${it.grade.co} ${it.grade.g}`));
   else if (it.cond) out.push(h("span", { class: "chip" }, `${Grader.condition(it.cond.overall)} · ~${it.cond.overall}`));
   return out;
 }
 
-function setView(v) {
+function setView(v, opts = {}) {
   if (S.view === "scan" && v !== "scan") Scan.stop();
+  if (!opts.fromPop && S.view && S.view !== v) Nav.push(S.view, v);
   S.view = v;
+  Nav.refresh();
   $$(".nav button").forEach(b => b.setAttribute("aria-current", b.dataset.v === v ? "page" : "false"));
   render();
   window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1616,9 +1690,11 @@ function setResult(r) {
     res.forEach((x, i) => {
       const head = h("div", { class: "row", style: "gap:10px;flex-wrap:nowrap" }, h("img", { src: x.thumb, alt: "", style: "width:44px;border-radius:5px;border:1px solid var(--edge)" }),
         h("div", { style: "min-width:0;flex:1" }, h("div", { class: "nm", style: "font-weight:700" }, x.item ? x.item.name : `Card ${i + 1}: not recognised`),
-          h("div", { class: "small muted" }, x.item ? `${x.item.setName || ""} · ${x.item.number || "?"}${x.item.printedTotal ? "/" + x.item.printedTotal : ""}` : (x.note || "Search for it by name below."))),
+          h("div", { class: "small muted" }, x.item ? `${x.item.setName || ""} · ${x.item.number || "?"}${x.item.printedTotal ? "/" + x.item.printedTotal : ""}` : (x.note || "Search for it by name below.")),
+          x.timing ? h("div", { class: "small muted num", style: "opacity:.75" }, "⏱ " + x.timing) : null),
         x.item ? (x.confident ? h("span", { class: "chip good" }, x.added ? "✓ Added" : "Sure") : h("span", { class: "chip", style: "color:var(--warn)" }, x.added ? "Added · Check" : "Check")) : null,
-        x.item && !x.added ? h("button", { class: "btn sm", onclick: () => { addItem(x.item, { quiet: true }); S.stackSession.unshift(x.item); x.added = true; renderTray(); setResult(r); } }, "Add") : null);
+        x.item && !x.added ? h("button", { class: "btn sm", onclick: () => { addItem(x.item, { quiet: true }); S.stackSession.unshift(x.item); x.added = true; renderTray(); setResult(r); } }, "Add") : null,
+        x.item && x.added ? h("button", { class: "btn sm ghost", title: "Change this card", onclick: () => openReplace(S.items.find(i => i.id === x.item.id) || x.item) }, "Change") : null);
       const row = h("div", { class: "mk", style: "padding:10px" }, head);
       if (x.item && !x.confident) {
         const opts = [x.topCard, ...(x.candidates || [])].filter(Boolean).slice(0, 6);
@@ -1688,6 +1764,7 @@ function setResult(r) {
           h("div", {}, h("div", { class: "eyebrow" }, "If PSA 10"), h("div", { class: "num", style: "font-size:20px;font-weight:700" }, money(gradedUSD(rawUSD(it), "PSA", 10))), h("div", { class: "est" }, "Model estimate"))))),
     it.ai && it.ai.gradeNote ? h("p", { class: "small muted", style: "margin:10px 0 0" }, "Claude: " + it.ai.gradeNote + (it.ai.estGrade ? ` (est. ${it.ai.estGrade})` : "")) : null,
     h("div", { style: "margin-top:12px" }, gb),
+    r.timing ? h("div", { class: "small muted num", style: "margin-top:8px;opacity:.75" }, "⏱ " + r.timing) : null,
     h("div", { class: "row", style: "margin-top:12px" },
       inColl ? h("span", { class: "chip good" }, "✓ Added to collection") : h("button", { class: "btn primary", onclick: () => { addItem(it); setResult({ ...r }); }, html: ICON.plus + "Add to collection" }),
       h("button", { class: "btn", onclick: () => openDetail(it) }, "Prices & details")),
@@ -1708,7 +1785,7 @@ function searchBox(onPick, { placeholder = "e.g. Charizard ex 199 or Rayquaza TG
   let timer, ctrl;
   const run = async () => {
     const q = inp.value.trim(); res.innerHTML = ""; if (q.length < 2) return;
-    if (!ENV.online) { res.append(h("div", { class: "small muted" }, ENV.claude ? "Live card search runs on the web version (link in Settings). Here, scan a photo and Claude identifies it." : "Search needs an internet connection.")); return; }
+    if (!ENV.online && !CardIndex.cards) { res.append(h("div", { class: "small muted" }, ENV.claude ? "Live card search runs on the web version (link in Settings). Here, scan a photo and Claude identifies it." : "Search needs an internet connection.")); return; }
     res.append(h("div", { class: "small muted" }, h("span", { class: "spin" }), " Searching…"));
     const m = q.match(/^(.*?)\s+#?([A-Za-z]{0,3}\d{1,3})(?:\s*\/\s*[A-Za-z]{0,3}(\d{1,3}))?$/);
     const nm = (m ? m[1] : q).replace(/"/g, "").trim(), numQ = m ? normNum(m[2]) : null;
@@ -1718,7 +1795,7 @@ function searchBox(onPick, { placeholder = "e.g. Charizard ex 199 or Rayquaza TG
       if (CardIndex.cards) {   // fuzzy, typo-tolerant: "ikachu" or "pikachu v 157"
         let hits = CardIndex.search(nm, 40);
         if (numQ) { const f = hits.filter(c => c.num === normNum(numQ)); if (f.length) hits = f; }
-        cards = (await detailsFor(hits.slice(0, 12))).filter(Boolean);
+        cards = await detailsFor(hits.slice(0, 12), 4000);
       }
       if (!cards.length && ENV.ptcg !== false) cards = await searchCards(query, 18).catch(() => []);
       if (!cards.length) cards = await dexFind({ number: numQ, total: m && m[3] ? +m[3] : null, name: nm }).catch(() => []);
@@ -1841,6 +1918,10 @@ function tabCards() {
       for (const it of arr) listEl.append(itemRow(it));
     }
   };
+  const toCheck = S.items.filter(i => i.kind === "card" && i.check);
+  if (toCheck.length) box.append(h("div", { class: "checkbar" },
+    h("span", {}, h("b", {}, `${toCheck.length} card${toCheck.length > 1 ? "s" : ""} to check`), h("span", { class: "small muted" }, " · added as best guesses")),
+    h("button", { class: "btn sm", onclick: openReview }, "Review")));
   box.append(
     h("div", { class: "row" },
       h("input", { class: "inp", style: "flex:1 1 200px", type: "search", id: "cardFilter", placeholder: "Filter your cards", value: f.q, oninput: e => { f.q = e.target.value; draw(); }, "aria-label": "Filter your cards" }),
@@ -1982,14 +2063,129 @@ async function enableNotify() {
   toast(p === "granted" ? "Notifications on" : "Notifications blocked in browser settings", p === "granted" ? "" : "bad");
 }
 
+/* ---------- Change a card (wrong match, wrong print) ----------
+   Shows other prints with the same name and similar names, ordered by how closely their picture
+   matches the card's scan photo; plus a search. Swapping keeps qty, paid, grade, notes and alerts. */
+function replaceItem(old, card) {
+  const ni = itemFromCard(card, { cond: old.cond, thumb: old.thumb });
+  Object.assign(ni, { id: old.id, qty: old.qty || 1, paid: old.paid || 0, grade: old.grade || { co: "RAW", g: null }, notes: old.notes || "", added: old.added || Date.now(), check: false });
+  const i = S.items.findIndex(x => x.id === old.id); if (i >= 0) S.items[i] = ni; else S.items.unshift(ni);
+  S.stackSession = S.stackSession.map(x => x.id === old.id ? ni : x);
+  for (const a of S.alerts) if (a.itemId === old.id) { a.name = ni.name; Store.saveAlert(a); }
+  const lr = S._lastResult; if (lr && lr.results) for (const x of lr.results) if (x.item && x.item.id === old.id) { x.item = ni; x.topCard = card; x.confident = true; }
+  if (lr && lr.item && lr.item.id === old.id) { lr.item = ni; lr.topCard = card; lr.confident = true; }
+  Store.saveItem(ni); snapshotHistory(); closeSheet(); render(); renderTray();
+  toast(`Changed to ${ni.name} · ${ni.setName || ""} ${ni.number}`);
+  return ni;
+}
+async function openReplace(it) {
+  const grid = h("div", { class: "pickgrid" }, h("div", { class: "small muted", style: "grid-column:1/-1" }, h("span", { class: "spin" }), " Finding related cards…"));
+  openSheet(h("div", { class: "stack" },
+    h("h2", {}, "Change this card"),
+    h("div", { class: "row", style: "gap:10px;flex-wrap:nowrap" }, it.thumb ? h("img", { src: it.thumb, alt: "Your photo", style: "width:56px;border-radius:6px;border:2px dashed var(--water)" }) : null,
+      h("div", { style: "min-width:0" }, h("div", { class: "small muted" }, "Now in your vault as"), h("b", {}, `${it.name}`), h("div", { class: "small muted" }, `${it.setName || ""} · ${it.number || "?"}${it.printedTotal ? "/" + it.printedTotal : ""}`))),
+    h("div", { class: "eyebrow" }, "Other prints and similar cards · closest picture first"),
+    grid,
+    h("div", { class: "eyebrow", style: "margin-top:6px" }, "Not here? Search any card"),
+    searchBox(card => replaceItem(it, card), { placeholder: "Name and number, e.g. Café Master TG25" })));
+  if (ENV.claude || !navigator.onLine) { grid.innerHTML = ""; grid.append(h("div", { class: "small muted", style: "grid-column:1/-1" }, ENV.claude ? "Related prints load on the web version (nk7ghub.github.io/pkmon). Use search below, or rescan the card." : "Related cards need an internet connection.")); return; }
+  const idx = await CardIndex.load().catch(() => null);
+  if (!idx) { grid.innerHTML = ""; grid.append(h("div", { class: "small muted", style: "grid-column:1/-1" }, "Card list didn't load. Use search below.")); return; }
+  const cur = String(it.cardId || "").replace(/^dex:/, ""), n = CardIndex.norm(it.name), base = CardIndex.norm(String(it.name).replace(/\s+(V|VMAX|VSTAR|ex|EX|GX)$/, ""));
+  const seen = new Set([cur]), pool = [];
+  const add = c => { if (!seen.has(c.id) && pool.length < 30) { seen.add(c.id); pool.push(c); } };
+  CardIndex.cards.filter(c => c.n === n).forEach(add);                     // same name, other prints
+  CardIndex.cards.filter(c => c.n !== n && c.n.startsWith(base)).forEach(add);   // V / VMAX / ex versions
+  CardIndex.search(it.name, 30).forEach(add);                              // similar names
+  let order = pool.map((b, i) => ({ b, i, sim: null }));
+  if (it.thumb && pool.length > 1) {
+    const im = await Visual.load(it.thumb);
+    if (im) { const sims = await Visual.compare(im, order).catch(() => null); if (sims) order.forEach((o, k) => o.sim = sims[k]); order.sort((a, b) => (b.sim ?? -1) - (a.sim ?? -1) || a.i - b.i); }
+  }
+  grid.innerHTML = "";
+  if (!order.length) grid.append(h("div", { class: "small muted", style: "grid-column:1/-1" }, "No related cards found. Use search below."));
+  for (const { b } of order) {
+    const st = CardIndex.sets.get(b.sid) || {};
+    const img = b.img ? h("img", { src: b.img + "/low.webp", alt: "", loading: "lazy" }) : ph(b);
+    if (img.tagName === "IMG") img.onerror = () => img.replaceWith(ph(b));
+    grid.append(h("button", { class: "pick", onclick: async e => {
+      e.currentTarget.disabled = true; e.currentTarget.style.opacity = ".6";
+      const [card] = await detailsFor([b]); if (card) replaceItem(it, card); else toast("Couldn't load that card. Try again.", "bad");
+    } }, img, h("span", { class: "pn" }, b.name), h("span", { class: "ps num" }, `${st.name || b.sid} · ${b.lid}${st.off ? "/" + st.off : ""}`)));
+  }
+}
+/* all best-guess cards in one list */
+function openReview() {
+  const list = h("div", { class: "stack" });
+  const draw = () => {
+    list.innerHTML = "";
+    const items = S.items.filter(i => i.kind === "card" && i.check);
+    if (!items.length) { list.append(h("div", { class: "empty" }, h("h3", {}, "All checked"), "Every card in your vault is confirmed.")); return; }
+    for (const it of items) list.append(h("div", { class: "mk row", style: "gap:10px;flex-wrap:nowrap;padding:10px" },
+      it.thumb ? h("img", { src: it.thumb, alt: "", style: "width:44px;border-radius:5px" }) : ph(it),
+      h("div", { style: "min-width:0;flex:1" }, h("b", {}, it.name), h("div", { class: "small muted" }, `${it.setName || ""} · ${it.number || "?"}`)),
+      h("button", { class: "btn sm", onclick: () => { it.check = false; Store.saveItem(it); draw(); render(); } }, "✓ Correct"),
+      h("button", { class: "btn sm primary", onclick: () => openReplace(it) }, "Change")));
+  };
+  draw();
+  openSheet(h("div", { class: "stack" }, h("h2", {}, "Cards to check"), h("p", { class: "small muted", style: "margin:0" }, "These were added as the closest match. Confirm each one, or change it to the right card."), list));
+}
+
+/* ---------- Back navigation ----------
+   On the web every screen change and pop-up is a browser history step, so the phone's Back button
+   closes the pop-up or returns to the previous screen instead of leaving the app.
+   Inside Claude the frame's history is not ours to touch, so only the on-screen Back button is used. */
+const Nav = {
+  stack: [], sheet: false, ignore: 0, useHistory: false,
+  init(first) {
+    this.useHistory = !ENV.claude && !!(history && history.pushState) && /^https?:$/.test(location.protocol);
+    if (!this.useHistory) return;
+    history.replaceState({ pk: "root", v: first }, "", location.pathname + location.search + "#" + first);
+    history.pushState({ pk: "view", v: first }, "", location.pathname + location.search + "#" + first);
+    addEventListener("popstate", e => this.onPop(e.state || {}));
+  },
+  push(from, to) {
+    this.stack.push(from);
+    if (this.useHistory) history.pushState({ pk: "view", v: to }, "", location.pathname + location.search + "#" + to);
+  },
+  sheetOpened() { this.sheet = true; if (this.useHistory) history.pushState({ pk: "sheet", v: S.view }, "", location.href); },
+  sheetClosed() { if (this.sheet && this.useHistory) { this.ignore++; history.back(); } this.sheet = false; },
+  onPop(st) {
+    if (this.ignore) { this.ignore--; return; }
+    if ($("#sheetRoot .scrim")) { this.sheet = false; closeSheet(true); return; }
+    if (st.pk === "root") {
+      toast("Press back again to close PKmon");   // we're on the first entry now: the next Back leaves the app
+      this.stack = []; this.refresh();
+      return;
+    }
+    if (st.v && st.v !== S.view) { this.stack.pop(); setView(st.v, { fromPop: true }); }
+  },
+  back() {
+    if ($("#sheetRoot .scrim")) return closeSheet();
+    if (!this.stack.length) return;
+    if (this.useHistory) history.back();
+    else setView(this.stack.pop(), { fromPop: true });
+  },
+  refresh() { const b = $("#backBtn"); if (b) b.hidden = !($("#sheetRoot .scrim") || this.stack.length); }
+};
+
 /* ---------- sheet ---------- */
 function openSheet(content) {
-  closeSheet();
-  const sc = h("div", { class: "scrim", onclick: e => { if (e.target === sc) closeSheet(); } }, h("div", { class: "sheet glass", role: "dialog", "aria-modal": "true" }, h("div", { class: "grab" }), content));
+  const had = !!$("#sheetRoot .scrim");
+  $("#sheetRoot").innerHTML = "";
+  const sc = h("div", { class: "scrim", onclick: e => { if (e.target === sc) closeSheet(); } }, h("div", { class: "sheet glass", role: "dialog", "aria-modal": "true" },
+    h("div", { class: "sheet-top" }, h("button", { class: "btn sm ghost", onclick: () => closeSheet(), html: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>Back' }), h("div", { class: "grab" }), h("span", { style: "width:72px" })), content));
   $("#sheetRoot").append(sc); document.addEventListener("keydown", escClose);
-  setTimeout(() => sc.querySelector("input,select,button")?.focus({ preventScroll: true }), 50);
+  if (!had) Nav.sheetOpened();
+  Nav.refresh();
+  setTimeout(() => sc.querySelector("input,select,button:not(.ghost)")?.focus({ preventScroll: true }), 50);
 }
-function closeSheet() { $("#sheetRoot").innerHTML = ""; document.removeEventListener("keydown", escClose); }
+function closeSheet(fromPop = false) {
+  const had = !!$("#sheetRoot .scrim");
+  $("#sheetRoot").innerHTML = ""; document.removeEventListener("keydown", escClose);
+  if (had && !fromPop) Nav.sheetClosed();
+  Nav.refresh();
+}
 function escClose(e) { if (e.key === "Escape") closeSheet(); }
 </script>
 <script>
@@ -2005,6 +2201,11 @@ function openDetail(it) {
     const t = it.prices && it.prices.tcg, cm = it.prices && it.prices.cm, row = tcgRow(it), raw = rawUSD(it);
     const vars = variantsOf(it);
     const upd = it.prices && it.prices.t ? new Date(it.prices.t).toLocaleString() : "—";
+    if (inColl && it.kind === "card") wrap.append(h("div", { class: "checkbar" + (it.check ? "" : " calm") },
+      h("span", {}, it.check ? h("b", {}, "Added as a best guess. Is this the right card?") : h("span", { class: "small" }, "Wrong card, set or print?")),
+      h("span", { class: "row", style: "gap:6px" },
+        it.check ? h("button", { class: "btn sm", onclick: () => { it.check = false; Store.saveItem(it); toast("Confirmed"); draw(); render(); } }, "✓ It's correct") : null,
+        h("button", { class: "btn sm" + (it.check ? " primary" : ""), onclick: () => openReplace(it) }, "Change card"))));
     wrap.append(h("div", { class: "detail-hero" },
       h("div", { class: "holo" }, cardImg(it, true)),
       h("div", { class: "stack", style: "gap:8px;min-width:0" },
@@ -2477,7 +2678,9 @@ async function boot() {
 
   // first paint: a #scan / #port / #trade / #set link wins, else Portfolio if the vault has cards, else Scanner
   const hv = (location.hash.match(/^#(scan|port|trade|set|install)$/) || [])[1];
-  setView(hv && hv !== "install" ? hv : S.items.length ? "port" : "scan");
+  const firstView = hv && hv !== "install" ? hv : S.items.length ? "port" : "scan";
+  setView(firstView, { fromPop: true }); Nav.init(firstView);
+  $("#backBtn").onclick = () => Nav.back();
   if (hv === "install") setTimeout(() => Install.go(), 600);
 
   if (ENV.claude) {
@@ -2487,8 +2690,9 @@ async function boot() {
     if (sample) { const lim = await sample.limits().catch(() => null); ENV.aiImages = !!(lim && lim.images); }
     if (db && ENV.uid) { const ok = await Store.loadCloud(); if (ok) render(); }
   }
+  // the card list loads in the background straight away, so it's ready before the first scan
+  if (!ENV.claude) CardIndex.load().then(i => { if (i) { const c = $("#modeChip"); if (c) c.title += ` · card list: ${i.cards.length.toLocaleString()} cards (${i.v})`; } });
   ENV.online = await probeOnline(); setModeChip();
-  if (ENV.dex && !ENV.claude) CardIndex.load().then(i => { if (i) { const n = i.cards.length.toLocaleString(); const c = $("#modeChip"); c.title += ` · card index: ${n} cards`; } });
   if (ENV.online) {
     await loadRates();
     await refreshPrices({ quiet: true });

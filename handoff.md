@@ -2,7 +2,7 @@
 
 Pokémon TCG card scanner, condition pre-grader, multi-market pricing and portfolio tracker, built as a single-file PWA.
 
-Updated: 2026-10-13
+Updated: 2026-10-14
 
 | Where | Link |
 |---|---|
@@ -18,7 +18,9 @@ Always open the **https** link. A downloaded copy (`file://` or `content://`) ha
 |---|---|
 | `index.html` | The whole app (~220 KB): HTML, CSS and JS. Starts with doctype, charset and viewport for the web version. |
 | `pkmon.webmanifest` | PWA manifest: id, scope, icons, shortcuts `#scan` / `#port` |
-| `pkmon-sw.js` | Service worker: offline app shell (`pkmon-shell-v3`), network-first, never caches API calls |
+| `pkmon-cards.json` | **Offline card list**: 20,635 English cards / 176 sets (number, name, HP, attack + ability names, "evolves from", rarity, picture). ~1.3 MB, ~347 KB gzipped. Built from the public `PokemonTCG/pokemon-tcg-data` repo (data date 2026-09-16). |
+| `tools/build-cards.py` | Rebuilds `pkmon-cards.json`: `git clone --depth 1 https://github.com/PokemonTCG/pokemon-tcg-data /tmp/ptcg && python3 tools/build-cards.py /tmp/ptcg > pkmon-cards.json`, then set `CARDS_V` in `index.html` to the new `v`. |
+| `pkmon-sw.js` | Service worker: offline app shell (`pkmon-shell-v4`), network-first, never caches API calls; leaves `pkmon-cards.json` to the app's own `pkmon-index` cache |
 | `pkmon-192.png`, `pkmon-512.png`, `pkmon-maskable-512.png`, `apple-touch-icon.png`, `pkmon-icon.svg` | App icons |
 | `README.md`, `handoff.md` | Docs |
 
@@ -40,14 +42,15 @@ At startup the app checks for `window.claude.use`.
 1. **Photo → cards.** `splitCards()` finds the background gaps between cards (per-column texture profile) and cuts any part wider than ~1.5 cards at its plainest column. Limits: `MAX_PER_PHOTO = 6` (one row; 3–4 reads best), `MAX_PHOTOS = 30` per batch; the live camera is unlimited, one card at a time.
 2. **Find the card.** `locateCard()` takes edge-continuity profiles plus a 63:88 pair search. The grader gets the exact crop; OCR gets a slightly larger full-resolution crop.
 3. **Grade.** `Grader.analyze`: centering from border widths (PSA 55/45 = 10); corners and edges from whitening and straightness; surface from fine lines and glare. `Foil` tracks shimmer between frames.
-4. **Read text.** `Scan.ocrRead`: up to 4 number passes (stop at the first parse), 1–2 name passes, 1 full-card pass (850 px). `parseCardNumber` / `numberCandidates` handle `057/195`, `TG20/TG30`, `GG35/GG70`, `SV107/SV122` and noise like `1157/1725`. Name candidates skip "Evolves from X".
-5. **Card list.** `CardIndex`: the full TCGdex card list (id, number, name, image) plus set sizes, streamed with % progress and cached 7 days in Cache Storage. It's downloaded once per session; after a failure it isn't retried for 2 min. If the download stalls for 7 s, that scan continues without it (`CardIndex.stalled`) and later cards don't wait.
-6. **Rank.** `CardIndex.rank`: exact number +45, set size +25, fuzzy number pair +65, trigram name containment up to +40 plus an evidence bonus, V/VMAX/VSTAR suffix ±. A strong read takes the top 12; a weak read (< 60) takes a pool of 24, plus same-name prints (max 30).
-7. **Picture check.** `Visual`: 8×11 lighting-normalised colour grid plus a 16×16 gradient hash vs each candidate's TCGdex image (`/low.webp`). Up to +45, relative within the pool; 4 s per image, 8 s overall.
-8. **Details.** `detailsFor`: asks TCGdex and pokemontcg.io at the same time, waits at most ~1.5 s for pokemontcg.io after TCGdex answers (8 s budget). A slow pokemontcg.io is remembered (`ENV.ptcgSlow`) and skipped for the session. HP digits in the text +12; an attack or ability name in the text +20.
-9. **Decide.** "Sure" = score ≥ 90 with a lead ≥ 12, or ≥ 65 with a lead ≥ 25 (never from a weak-read pool). Otherwise the result shows a pick grid. Stack mode adds unsure cards as the best guess with `item.check = true`.
-10. **Without the card list:** TCGdex search (number, then the top 3 name prefixes, in parallel, 12 s budget) → picture-ordered → always marked Check.
-11. **Timing.** Every result carries `timing` ("9.4 s · read 7.2 s · pictures 0.7 s · lookup 1.5 s"), shown under each batch row and logged to the console. Settings shows the card list status, with a "Download card list now" button.
+4. **Read text.** `Scan.ocrRead`: up to 6 number passes (stop at the first parse), 2 name passes, 1 full-card pass (1100 px). `parseCardNumber` / `numberCandidates` handle `057/195`, `TG20/TG30`, `GG35/GG70`, `SV107/SV122` and noise like `1157/1725`. Name candidates skip "Evolves from X".
+5. **Card list.** `CardIndex.load()` reads `pkmon-cards.json` from the app's own site (starts at app launch, before the online check), keeps it in Cache Storage `pkmon-index` keyed by `CARDS_V`, single flight. After a failure it waits 60 s before trying again, so cards in a stack never each wait. No outside server is needed to match a card.
+6. **Read extras.** `ocrRead` also returns `names` (words near the name in reading order, "Evolves from …" removed), `hps` (round numbers 30–340 in the name strip), and `evo` (the "Evolves from" name).
+7. **Rank.** `CardIndex.rank`: exact number +45, set size +25, fuzzy number pair +65, trigram name up to +40 plus up to +10 evidence; VMAX/VSTAR ±. Only for cards already at ≥ 20: HP match +12, attack/ability name in the text +20 (+8 each extra), "evolves from" match +12, and −18 for the card named in "Evolves from" (it's the *previous* stage: Shaymin V vs Shaymin VSTAR). A strong read keeps the top 12; a weak read (< 60) keeps 20; same-name prints are added up to 28.
+8. **Picture check.** `Visual`: 8×11 colour grid plus 16×16 gradient hash vs each candidate's official image (`images.pokemontcg.io`). Up to +45, relative within the pool; 4 s per image, 8 s in total.
+9. **Decide.** "Sure" = score ≥ 90 with a lead ≥ 12, or ≥ 65 with a lead ≥ 25 (never from a weak-read pool). Below 55 the scan is "weak": it shows the pick grid and is **not** added automatically, even in stack mode. Otherwise unsure cards in stack mode are added as the best guess with `item.check = true`.
+10. **Prices.** `detailsFor` asks pokemontcg.io for the first card only, 8 s at most; if that times out, pokemontcg.io is skipped for 5 min (`ENV.ptcgSlowUntil`). Other choices are built from the list (`CardIndex.toCard`). Any card saved without prices goes into `PriceQueue`, which fetches prices in one batch 1.5 s later.
+11. **Without the card list** (rare): pokemontcg.io search by number, then by each name word, then TCGdex, each with a time limit, and the note says the list didn't load.
+12. **Timing.** Every result has `timing` ("10.5 s · read 10.0 s · pictures 0.0 s · prices 0.4 s"), shown under each result (⏱) and logged to the console.
 
 ## Fixing wrong cards
 - **Where to start:** the "Check ›" chip in any list, the Portfolio "N cards to check · Review" bar (`openReview`), the detail page bar ("It's correct" / "Change card"), or "Change" on batch rows.
@@ -78,16 +81,21 @@ The `Install` object: `beforeinstallprompt` on Chrome/Edge/Android; Safari Share
 | 2026-10-13 | **PR #4: scan speed.** The user saw 3 cards take 3–5 min with 2 "not found". Reproduced: old code + a card list that never loads = **268 s, 0/3 found** (the list download was retried for every card with a 45 s timeout, then fell back to slow searches). Fix: list downloaded once with % progress and stall guard; 4 OCR passes instead of 9 (smaller strips); picture check 4 s/image, 8 s overall, pool 24; TCGdex + pokemontcg.io in parallel; slow pokemontcg.io skipped; per-card timing shown. |
 
 | 2026-10-13 | **Rollback (user request):** `index.html` restored to `e184dea` (after PR #2, before PR #3), the version the user found scanned best. Removed by this rollback: back navigation (`Nav`), change-card (`openReplace` / `replaceItem` / `openReview`), and the PR #4 speed changes (card-list single download, 4 OCR passes, budgets, timing line). Kept: blueprint, skill, review, handoff. Re-apply later one change at a time, testing on the phone after each. |
+| 2026-10-14 | **Offline card list + back button (PR #7).** Cause of slow and wrong scans: the TCGdex `/cards` list download (retried per card, 45 s each) and, without it, a backup search using the *longest* word read ("ShayminV", "Chaomedeon"). Fix: `pkmon-cards.json` shipped with the app; ranking uses HP, attack names and "evolves from" from the list; prices only for the shown card; weak guesses not auto-added; per-card timing. Back navigation and change-card (PR #3) re-applied unchanged. |
 
-## Benchmarks (headless Chromium, user's Alcremie / Charizard ex / Umbreon VMAX photo)
-Simulated slow network: pokemontcg.io hanging, TCGdex list 4 s, details 1.5 s, images 0.6 s.
+## Benchmarks (2026-10-14, headless Chromium, real Tesseract, real card list)
+No card pictures in the test (images can't be reached from the build container), so these are text-only results; live, the picture check adds up to +45 to the right print.
 
-| Case | Old | New |
+| Photo | Old (e184dea) | New |
 |---|---|---|
-| Card list loads | 60 s, 3/3 | **28 s**, 3/3 (Charizard ex 006 and Umbreon VMAX TG23 sure; Alcremie TG08 Check) |
-| Card list never loads | 268 s, 0/3 | **~45 s**, 1/3 (Charizard ex as Check), others "not found" with a note |
+| Alcremie TG08 · Charizard ex 006/165 · Umbreon VMAX TG23 | on the phone: 3–5 min, 1/3 (and the wrong Alcremie) | **35 s, 3/3** (Charizard sure; Alcremie, Umbreon "Check": same art in two sets) |
+| Same photo, pokemontcg.io hanging | 268 s, 0/3 (simulated) | **~33 s, 3/3**, prices filled in later |
+| Octillery TG03 · Acerola's Premonition TG24 · Gloria TG26 | — | 29 s, 3/3 (2 sure) |
+| Rayquaza VMAX TG20 / Pikachu V 157/172 | — | 7 s / 9 s, both sure |
+| Café Master TG25 · Cynthia's Ambition 178 · 169 | — | 2/3 by text (Cynthia prints tie; picture decides live); Café Master's name wasn't readable, so it's a pick, not a guess |
+| Shaymin VSTAR (the phone's read text) | not recognised | Shaymin VSTAR 014 / 173 (both prints, picture decides) |
 
-The two "new" runs above ran alone; the 60 s old run shared the CPU with a new run, so it's somewhat inflated. Phone times depend on CPU; OCR is the largest share (~6 s per card in the container).
+Most of the time is reading text (~6–13 s per card in the container; phones vary).
 
 ## Tested
 - All in headless Chromium with recorded API responses; the container can't reach pokemontcg.io or TCGdex.
@@ -95,7 +103,8 @@ The two "new" runs above ran alone; the 60 s old run shared the CPU with a new r
 - No JS errors; no sideways scroll at 360/400/1280 px; light/dark; exports; trade; binder; paste/drop; artifact mode; back navigation; change-card; Chrome installability.
 
 ## Known limits / next steps
-- **Live APIs not exercised from the build container.** If the TCGdex `/cards` list is very slow on mobile data, recognition drops to the weaker fallback (see benchmark). Settings → "Download card list now" retries it.
+- **Live APIs not exercised from the build container.** Matching now works without them; prices and the picture check still need pokemontcg.io / images.pokemontcg.io. If that image host ever blocks reading pixels (CORS), the picture check silently adds nothing.
+- **New sets** released after the card list date (2026-09-16) aren't in `pkmon-cards.json`; rebuild with `tools/build-cards.py`. A GitHub Action could do this weekly.
 - eBay has no free sold API, so it links to sold listings. Graded prices are model estimates. Price alerts fire only while the app is open.
 - Grid layouts (2 rows of cards) aren't split; use one row per photo. No perspective (keystone) correction.
 - **Phase 2 (not started):** a GitHub Action that precomputes picture fingerprints for all ~20k cards, so picture matching works without per-scan image downloads. Possible need for workflow write permission.
