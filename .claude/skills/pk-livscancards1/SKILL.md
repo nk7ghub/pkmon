@@ -5,29 +5,27 @@ description: Build or extend a live camera/photo scanner web app that identifies
 
 # pk-livscancards1
 
-The reference build is `nk7ghub/pkmon` (`index.html`, `handoff.md`). In that repo, read `handoff.md` first and extend; never rebuild. For a new domain, reuse the patterns, not the data.
+Reference build: `nk7ghub/pkmon` (`index.html`, `handoff.md`). There, read `handoff.md` first and extend; never rebuild. New domain: reuse patterns, not data.
 
 ## Workflow
-Plan, risk table, time/tokens → wait for go → build with a live % after each step → test → PR → update `handoff.md`. No silent plan changes.
+Diagnose from screenshots → plan, risks, time/tokens → wait for go → build with live % → test on real photos → PR, merge, republish artifact → update `handoff.md`. No silent plan changes. If old photos get worse, revert that part.
 
 ## Patterns
-- **Shell.** One file; light/dark tokens on `:root`; glass UI, bottom nav, sheets with Back. The web copy starts with doctype, charset and viewport (strip them for the artifact). Add our own `[hidden]{display:none!important}`.
-- **Input.** Native `<label for>` file inputs (camera + gallery), paste, drop. If no blur within 1.5 s, the picker was blocked → show a help sheet.
+- **Shell.** One file, light/dark tokens, glass UI, bottom nav, sheets with Back. Strip doctype/charset/viewport for the artifact. `append(null)` prints "null": pass `""`.
+- **Catalogue.** Ship it as compact JSON built from public data by a script; load once from your own site, cache, version. Never fetch per item; back off after failure.
 - **Pipeline.**
-  1. Split multi-item photos at texture gaps.
-  2. Locate each item by edge continuity and aspect ratio.
-  3. OCR a full-resolution crop with few small passes; stop at the first ID.
-  4. Rank against a cached local catalogue index (ID, group size, trigram name).
-  5. Picture check: colour grid + gradient hash.
-  6. Fetch details from two sources in parallel.
-  7. Above the "sure" threshold add it; otherwise show a pick grid.
-- **Budgets.** Download the catalogue once with % and a stall guard, never per item. 4 s per image, 8 s per stage; skip slow sources for the session. Show a per-item timing line.
-- **Correction.** Unsure items become best guesses flagged "Check". Change-item lists variants by picture match and keeps qty, cost and alerts.
-- **Market data.** Side-by-side sources, deep links where there's no API, estimates labelled, multi-currency, alerts.
-- **Platform.** One `history` step per view or sheet; double-Back exits. Install prompt, iOS steps, artifact → web link. The artifact has no network, camera or install: use vision `sample`, `db`, `downloads`, `user`.
+  1. Split photos at texture gaps.
+  2. Locate by edges + aspect ratio. If the box is much smaller than the split part, fall back: outer edges → outline → part width × aspect.
+  3. OCR: few passes, each with a time limit, plus an item budget. Restart the worker on timeout, or later items queue and fail.
+  4. Rank locally: ID, set size, trigram name, HP, attack names, "evolves from". Half-read long words count; IDs hide in digit runs; promos lose ties.
+  5. Picture check, time-limited.
+  6. Price only the shown item.
+- **Decide.** Sure thresholds, else a pick grid. Weak scores never auto-add; unsure ones get "Check". Show per-item timing.
+- **Prices.** Primary source, then a fallback through stable endpoints (set list → set items → item), never guessed query syntax. Never overwrite a price with an empty one; queue missing prices; show the source.
+- **Platform.** One `history` step per view; double-Back exits. Live camera: portrait stage, aspect frame, corner brackets, hint. Install prompt. Artifact: vision `sample`, `db`, `downloads`, `user`. Warn on downloaded copies.
 
 ## Testing
-Headless Chromium with recorded APIs. Real Tesseract (npm) on the user's photos. Simulate a slow or hanging network and time old vs new. Check overflow, JS errors, installability.
+Headless Chromium, real OCR, real catalogue. Mock APIs in the other database's id style, including no-price, rate-limit (429) and hang cases. Rerun all past photos before merging; dump crops when OCR fails. Check overflow, errors, Back.
 
 ## Don'ts
-No invented prices, no user data, no unverified API claims.
+No invented prices, no user data, no unverified API claims or query syntax.
