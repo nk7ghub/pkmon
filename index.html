@@ -123,6 +123,9 @@ h3{font-size:14px;font-weight:700}
 /* scanner */
 .stage{position:relative;border-radius:var(--r-lg);overflow:hidden;aspect-ratio:3/4;max-height:66vh;width:100%;background:#05060d;margin-inline:auto}
 @media (min-width:900px){.stage{aspect-ratio:4/3;max-height:560px}}
+/* live camera: a tall card-shaped stage so the 63:88 guide fills it */
+.stage.live{aspect-ratio:5/7;max-height:76vh;max-width:min(100%,calc(76vh * 5 / 7))}
+@media (min-width:900px){.stage.live{aspect-ratio:5/7;max-height:640px;max-width:458px}}
 .stage video,.stage canvas,.stage img.still{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .stage .hud{position:absolute;left:10px;right:10px;top:10px;display:flex;gap:8px;flex-wrap:wrap;z-index:3}
 .hud .chip{background:rgba(8,10,22,.55);color:#fff;border-color:rgba(255,255,255,.18);-webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px)}
@@ -935,8 +938,8 @@ const Foil = {
 const Scan = {
   stream: null, video: null, canvas: null, work: null, raf: 0, last: null, lastFrame: null, stableSince: 0,
   busy: false, lastAddedId: null, lastAddedAt: 0, ocr: null, ocrLoading: null, result: null, grade: null,
-  guide(cw, chh) { // guide rect in canvas coords, 63:88
-    const hgt = Math.min(chh * .82, cw * .78 * 88 / 63), wid = hgt * 63 / 88;
+  guide(cw, chh) { // guide rect in canvas coords, 63:88 (upright card)
+    const hgt = Math.min(chh * .9, cw * .86 * 88 / 63), wid = hgt * 63 / 88;
     return { x: (cw - wid) / 2, y: (chh - hgt) / 2, w: wid, h: hgt };
   },
   async start() {
@@ -948,6 +951,7 @@ const Scan = {
       return;
     }
     this.video = $("#vid"); this.video.srcObject = this.stream; await this.video.play().catch(() => {});
+    this.video.closest(".stage")?.classList.add("live");
     $("#stageIdle").hidden = true; $("#stageStill").hidden = true;
     this.canvas = $("#overlay"); this.work = document.createElement("canvas");
     this.work.width = Grader.W + 24; this.work.height = Grader.H + 24;
@@ -958,7 +962,7 @@ const Scan = {
   stop() {
     cancelAnimationFrame(this.raf); this.raf = 0;
     if (this.stream) this.stream.getTracks().forEach(t => t.stop());
-    this.stream = null; if ($("#stageIdle")) $("#stageIdle").hidden = false; renderScanCtrls();
+    this.stream = null; if ($("#stageIdle")) $("#stageIdle").hidden = false; $("#vid")?.closest(".stage")?.classList.remove("live"); renderScanCtrls();
   },
   frameTick: 0,
   loop() {
@@ -1030,7 +1034,15 @@ const Scan = {
       // find the card's edges in the photo; fall back to a centred 63:88 crop
       let box = locateCard(bmp);
       // a cut-out part of a multi-card photo is nearly all card: a much smaller box is the artwork frame of a full-art card
-      if (list.length > 1 && (!box || box.w < bmp.width * .72)) { const tb = textureBox(bmp); if (tb && (!box || tb.w > box.w * 1.2)) box = tb; }
+      if (list.length > 1 && (!box || box.w < bmp.width * .72)) { const ob = locateCard(bmp, true); if (ob && ob.w >= bmp.width * .72) box = ob; }
+      if (list.length > 1 && (!box || box.w < bmp.width * .72)) {
+        // the split already found the card's left/right edges (part = card + 3 % each side); take its 63:88 shape,
+        // centred on the outline if the background is plain enough to see it, else on the part
+        const tb = textureBox(bmp), cw = Math.min(bmp.width / 1.06, bmp.height * 63 / 88), ch = cw * 88 / 63;
+        const okTb = tb && tb.w > bmp.width * .72 && Math.abs(tb.h / tb.w - 88 / 63) < .2;
+        const cy = okTb ? tb.y + tb.h / 2 : bmp.height / 2;
+        box = okTb ? tb : { x: (bmp.width - cw) / 2, y: clamp(cy - ch / 2, 0, Math.max(0, bmp.height - ch)), w: cw, h: ch };
+      }
       if (!box) { const ar = 63 / 88; let w = bmp.width, hh = bmp.height; if (w / hh > ar) w = hh * ar; else hh = w / ar; box = { x: (bmp.width - w) / 2, y: (bmp.height - hh) / 2, w, h: hh }; }
       const pad = .045, gx0 = box.x - box.w * pad, gy0 = box.y - box.h * pad;
       const wc = document.createElement("canvas"); wc.width = Grader.W; wc.height = Grader.H;
@@ -1060,7 +1072,7 @@ const Scan = {
   async loadOCR() {
     if (this.ocr || this.ocrLoading) return this.ocrLoading;
     this.ocrLoading = (async () => {
-      await new Promise((res, rej) => { const s = h("script", { src: "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" }); s.onload = res; s.onerror = rej; document.head.append(s); });
+      if (!window.Tesseract) await new Promise((res, rej) => { const s = h("script", { src: "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js" }); s.onload = res; s.onerror = rej; document.head.append(s); });
       this.ocr = await withTimeout(Tesseract.createWorker("eng"), 60000, "Text reader took too long to load. Check your connection and try again.");
       return this.ocr;
     })().catch(e => { console.warn("OCR", e); this.ocrLoading = null; this.ocr = null; toast(e.message || "Text reader failed to load", "bad"); return null; });
@@ -1071,12 +1083,21 @@ const Scan = {
     const W = shot.width, H = shot.height;
     // crop by fraction of the card; aim for ~1600 px wide strips so small print stays legible
     const crop = (fx, fy, fw, fh, target = 1600, filter = "grayscale(1) contrast(1.7)") => { const ww = fw * W, hh = fh * H, sc = Math.min(4, target / ww); const c = document.createElement("canvas"); c.width = ww * sc; c.height = hh * sc; const k = c.getContext("2d"); k.filter = filter; k.drawImage(shot, fx * W, fy * H, ww, hh, 0, 0, c.width, c.height); return c; };
-    const rec = async (c, psm = "6") => { await w.setParameters({ tessedit_pageseg_mode: psm }); return (await withTimeout(w.recognize(c), 30000, "Reading the card took too long")).data.text || ""; };
+    // each pass has a time limit, and the card a total budget. A pass that runs over leaves the reader busy, so the reader
+    // is restarted: otherwise the next cards queue behind it and all time out ("Reading the card took too long").
+    const t0 = performance.now(), BUDGET = 40000; let dead = false;
+    const rec = async (c, psm = "6") => {
+      if (dead || performance.now() - t0 > BUDGET) return "";
+      try { await w.setParameters({ tessedit_pageseg_mode: psm }); return (await withTimeout(w.recognize(c), 20000, "slow")).data.text || ""; }
+      catch (e) { dead = true; console.warn("OCR pass", e && e.message); try { w.terminate(); } catch { /* gone */ } this.ocr = null; this.ocrLoading = null; return ""; }
+    };
     const G = "grayscale(1)", GC = "grayscale(1) contrast(1.7)";
     // several passes; small italic print on foil needs different crops and layout modes. Stop at the first readable number.
-    const numPasses = [[0, .84, .62, .16, 1600, GC, "6"], [.15, .9, .45, .07, 1400, GC, "6"], [0, .84, .62, .16, 1000, G, "11"], [.38, .84, .62, .16, 1600, GC, "6"], [.38, .84, .62, .16, 1000, G, "11"], [0, .86, 1, .14, 1800, GC, "11"]];
+    // the three passes that found numbers in testing (2026-10-14: 6 passes → 3; the full-card pass below also reads numbers)
+    const numPasses = [[.15, .9, .45, .07, 1400, GC, "6"], [0, .86, 1, .14, 1800, GC, "11"], [0, .84, .62, .16, 1600, GC, "6"]];
     let text = "", num = null;
-    for (const [fx, fy, fw, fh, tg, flt, psm] of numPasses) { const t = await rec(crop(fx, fy, fw, fh, tg, flt), psm); text += "\n" + t; num = parseCardNumber(t); if (num) break; }
+    let numPass = -1; for (const [fx, fy, fw, fh, tg, flt, psm] of numPasses) { numPass++; const t = await rec(crop(fx, fy, fw, fh, tg, flt), psm); text += "\n" + t; num = parseCardNumber(t); if (num) break; }
+    if (!num) numPass = -1;
     const nameT = (await rec(crop(.03, .01, .8, .12, 1400, GC), "11")) + "\n" + (await rec(crop(.03, .01, .97, .12, 1000, G), "3"));
     const full = await rec(crop(0, 0, 1, 1, 1100, G), "11");   // attack names, rule text, sometimes the number
     if (!num) num = parseCardNumber(full);
@@ -1092,7 +1113,7 @@ const Scan = {
     const names = [...new Set((nameText.match(/[A-Za-zÀ-ÿ'’.\-]{4,}/g) || []).filter(x => !STOP.test(x)))];
     const raw = text.replace(/\s+/g, " ").trim();
     return { name: names[0] || "", names: names.slice(0, 4), number: num && num.number, total: num && num.total, nums: numberCandidates(text), hp: hpM ? +hpM[1] : null, hps,
-      evo: evoM ? evoM[1] : "", nameText, top: nameT, full: text, text: text.toLowerCase(), raw };
+      evo: evoM ? evoM[1] : "", nameText, numPass, top: nameT, full: text, text: text.toLowerCase(), raw };
   },
   async identify(shot, gr, foil, auto, hi, batch = false) {
     const thumb = (() => { const t = document.createElement("canvas"); t.width = 126; t.height = 176; t.getContext("2d").drawImage(shot, 0, 0, 126, 176); return t.toDataURL("image/jpeg", .72); })();
@@ -1388,7 +1409,7 @@ async function splitCards(bmp) {
 }
 
 /* Find the card in a photo: the card outline is the longest straight, continuous edge on each side */
-function locateCard(bmp) {
+function locateCard(bmp, outer = false) {
   const sc = 480 / Math.max(bmp.width, bmp.height), W = Math.round(bmp.width * sc), H = Math.round(bmp.height * sc);
   const c = document.createElement("canvas"); c.width = W; c.height = H; const x = c.getContext("2d", { willReadFrequently: true });
   x.drawImage(bmp, 0, 0, W, H); const d = x.getImageData(0, 0, W, H).data;
@@ -1404,10 +1425,12 @@ function locateCard(bmp) {
   const pair = (a, len, lo, hi) => { const tol = Math.max(2, len * .04); let bi = -1, bv = -1, bj = -1;
     for (let i = Math.max(1, lo | 0); i < hi && i + len - tol < a.length - 1; i++) { let mj = -1, mv = -1; for (let j = Math.round(i + len - tol); j <= Math.min(a.length - 2, Math.round(i + len + tol)); j++) if (a[j] > mv) { mv = a[j]; mj = j; } if (a[i] + mv > bv) { bv = a[i] + mv; bi = i; bj = mj; } }
     return [bi, bj, bv]; };
+  // outer: the photo part is about one card wide (multi-card split), so its edges sit in the outer 30 %
+  const A = outer ? .3 : .45, B = outer ? .7 : .55;
   const opts = [];
-  { const [l] = best(cs, W * .01, W * .45), [r] = best(cs, W * .55, W * .995), w = r - l;
+  { const [l] = best(cs, W * .01, W * A), [r] = best(cs, W * B, W * .995), w = r - l;
     if (w > W * .3) { const [t, b, v] = pair(rs, w / AR, H * .005, H * .5); if (t >= 0) opts.push({ l, r, t, b, score: (cs[l] + cs[r]) / (H * .5) + v / (W * .5) }); } }
-  { const [t] = best(rs, H * .01, H * .45), [b] = best(rs, H * .55, H * .995), hh = b - t;
+  if (!outer) { const [t] = best(rs, H * .01, H * .45), [b] = best(rs, H * .55, H * .995), hh = b - t;
     if (hh > H * .3) { const [l, r, v] = pair(cs, hh * AR, W * .005, W * .5); if (l >= 0) opts.push({ l, r, t, b, score: (rs[t] + rs[b]) / (W * .5) + v / (H * .5) }); } }
   opts.sort((p1, p2) => p2.score - p1.score);
   const o = opts[0]; if (!o || o.score < .9) return null;
@@ -1587,6 +1610,12 @@ function drawOverlay(ctx, g, gr, dpr) {
   const grad = ctx.createLinearGradient(g.x, g.y, g.x + g.w, g.y + g.h);
   grad.addColorStop(0, "#FF6B9F"); grad.addColorStop(.5 + .3 * Math.sin(t), "#FFD23F"); grad.addColorStop(1, "#4FB3FF");
   ctx.strokeStyle = grad; ctx.lineWidth = 3 * dpr; ctx.beginPath(); ctx.roundRect(g.x, g.y, g.w, g.h, 14 * dpr); ctx.stroke();
+  // bold corner brackets + hint: hold the card upright and fill the frame
+  { const L = Math.min(g.w, g.h) * .14; ctx.strokeStyle = "#fff"; ctx.lineWidth = 5 * dpr; ctx.lineCap = "round";
+    for (const [x, y, dx, dy] of [[g.x, g.y, 1, 1], [g.x + g.w, g.y, -1, 1], [g.x, g.y + g.h, 1, -1], [g.x + g.w, g.y + g.h, -1, -1]]) {
+      ctx.beginPath(); ctx.moveTo(x, y + dy * L); ctx.lineTo(x, y); ctx.lineTo(x + dx * L, y); ctx.stroke(); }
+    if (!gr || !gr.box) { ctx.font = `700 ${12 * dpr}px system-ui,sans-serif`; ctx.textAlign = "center"; ctx.textBaseline = "top"; ctx.fillStyle = "rgba(255,255,255,.9)";
+      ctx.fillText("Card upright · fill the frame", g.x + g.w / 2, g.y + g.h + 6 * dpr > ctx.canvas.height - 16 * dpr ? g.y + 8 * dpr : g.y + g.h + 6 * dpr); } }
   // grid
   ctx.strokeStyle = "rgba(255,255,255,.22)"; ctx.lineWidth = 1 * dpr; ctx.setLineDash([4 * dpr, 6 * dpr]);
   for (let i = 1; i < 3; i++) { ctx.beginPath(); ctx.moveTo(g.x + g.w * i / 3, g.y); ctx.lineTo(g.x + g.w * i / 3, g.y + g.h); ctx.moveTo(g.x, g.y + g.h * i / 3); ctx.lineTo(g.x + g.w, g.y + g.h * i / 3); ctx.stroke(); }
