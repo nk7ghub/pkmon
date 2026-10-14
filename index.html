@@ -378,15 +378,22 @@ function userRoot() { return ENV.cap.db && ENV.uid ? ENV.cap.db.doc("data/users/
 const PriceQueue = {
   ids: new Set(), tried: new Set(), timer: null,
   add(it) {
-    if (!it || it.kind !== "card" || !it.cardId || String(it.cardId).startsWith("dex:") || (it.prices && (it.prices.tcg || it.prices.cm)) || this.tried.has(it.cardId)) return;
+    if (!it || it.kind !== "card" || !it.cardId || String(it.cardId).startsWith("dex:") || it.manualValue || rawUSD(it) > 0 || this.tried.has(it.cardId)) return;
     this.ids.add(it.cardId); this.tried.add(it.cardId); clearTimeout(this.timer); this.timer = setTimeout(() => this.run(), 1500);
   },
   async run() {
     const ids = [...this.ids]; this.ids.clear(); if (!ids.length || ENV.claude || ENV.ptcg === false) return;
-    const cards = await withTimeout(cardsByIds(ids), 25000, "slow").catch(() => []);
-    if (!cards.length) { ids.forEach(i => this.tried.delete(i)); return; }   // try again on the next add or price refresh
+    const cards = ENV.ptcg === false ? [] : await withTimeout(cardsByIds(ids), 25000, "slow").catch(() => []);
     const map = new Map(cards.map(c => [c.id, c]));
-    for (const it of S.items) { const c = map.get(it.cardId); if (!c || (it.prices && (it.prices.tcg || it.prices.cm))) continue;
+    // no price from pokemontcg.io → TCGdex, one card at a time
+    for (const id of ids.slice(0, 12)) {
+      if (map.has(id) && hasPrice(map.get(id))) continue;
+      const it = S.items.find(x => x.cardId === id); if (!it) continue;
+      const base = map.get(id) || { id, name: it.name, number: it.number, rarity: it.rarity, set: { id: it.setId, name: it.setName, series: it.series, printedTotal: it.printedTotal, total: it.setTotal, ptcgoCode: it.setCode || "" }, images: { small: it.img, large: it.imgL } };
+      const c = await withTimeout(dexPrices(base), 15000, "slow").catch(() => base); if (hasPrice(c)) map.set(id, c);
+    }
+    if (![...map.values()].some(hasPrice)) { ids.forEach(i => this.tried.delete(i)); return; }   // try again on the next add or price refresh
+    for (const it of S.items) { const c = map.get(it.cardId); if (!c || !hasPrice(c) || (it.prices && (it.prices.tcg || it.prices.cm) && rawUSD(it))) continue;
       const fresh = itemFromCard(c, { variant: it.variant, foilGuess: it.cond && it.cond.foil });
       Object.assign(it, { prices: fresh.prices, variant: fresh.variant, rarity: it.rarity || fresh.rarity, setCode: fresh.setCode || it.setCode }); Store.saveItem(it); }
     snapshotHistory(); render(); renderTray();
@@ -554,6 +561,31 @@ async function dexFind({ number, total, name }) {
   return cards;
 }
 
+/* does this card carry a usable price? */
+function hasPrice(c) {
+  const t = c && c.tcgplayer && c.tcgplayer.prices; if (t && Object.values(t).some(v => v && (v.market || v.mid || v.low))) return true;
+  const m = c && c.cardmarket && c.cardmarket.prices; return !!(m && (m.trendPrice || m.averageSellPrice || m.avg30));
+}
+/* prices from TCGdex for a card that pokemontcg.io returned without any: same name + number, then the set size picks the print */
+async function dexPrices(card) {
+  const name = String(card.name || ""), num = String(card.number || ""); if (!name || !num) return card;
+  const q = (n, l) => dexGet(`/cards?name=eq:${encodeURIComponent(n)}&localId=eq:${encodeURIComponent(l)}`).catch(() => []);
+  let list = await q(name, num);
+  if (!list.length && /^\d+$/.test(num)) list = await q(name, num.padStart(3, "0"));
+  if (!list.length) return card;
+  const want = card.set && card.set.printedTotal, setName = CardIndex.norm(card.set && card.set.name);
+  let best = null;
+  for (const b of list.slice(0, 5)) {
+    const d = await dexGet("/cards/" + encodeURIComponent(b.id)).catch(() => null); if (!d) continue;
+    const m = mapDex(d); if (!hasPrice(m)) continue;
+    const sameSet = (want && m.set.printedTotal == want) || (setName && CardIndex.norm(m.set.name) === setName);
+    if (sameSet) { best = m; break; }
+    if (!best && list.length === 1) best = m;
+  }
+  if (!best) return card;
+  return { ...card, tcgplayer: card.tcgplayer && hasPrice({ tcgplayer: card.tcgplayer }) ? card.tcgplayer : best.tcgplayer, cardmarket: card.cardmarket && hasPrice({ cardmarket: card.cardmarket }) ? card.cardmarket : best.cardmarket, priceFrom: "TCGdex" };
+}
+
 /* ---- currencies ---- */
 const CURRENCIES = {
   USD: ["US Dollar", "$", 1], EUR: ["Euro", "€", .92], GBP: ["British Pound", "£", .78], JPY: ["Japanese Yen", "¥", 150],
@@ -713,7 +745,8 @@ async function refreshPrices({ quiet = false } = {}) {
     const cards = await fetchCardsAny(all);
     const map = new Map(cards.map(c => [c.id, c]));
     for (const it of S.items) {
-      const c = map.get(it.cardId); if (!c) continue;
+      const c = map.get(it.cardId);
+      if (!c || !hasPrice(c)) { if (it.kind === "card" && !rawUSD(it)) { PriceQueue.tried.delete(it.cardId); PriceQueue.add(it); } continue; }   // keep the old price; try TCGdex
       it.prices = snapshotPrices(c);
       if (!it.img && c.images) { it.img = c.images.small; it.imgL = c.images.large; }
       Store.saveItem(it);
@@ -996,6 +1029,8 @@ const Scan = {
       try {
       // find the card's edges in the photo; fall back to a centred 63:88 crop
       let box = locateCard(bmp);
+      // a cut-out part of a multi-card photo is nearly all card: a much smaller box is the artwork frame of a full-art card
+      if (list.length > 1 && (!box || box.w < bmp.width * .72)) { const tb = textureBox(bmp); if (tb && (!box || tb.w > box.w * 1.2)) box = tb; }
       if (!box) { const ar = 63 / 88; let w = bmp.width, hh = bmp.height; if (w / hh > ar) w = hh * ar; else hh = w / ar; box = { x: (bmp.width - w) / 2, y: (bmp.height - hh) / 2, w, h: hh }; }
       const pad = .045, gx0 = box.x - box.w * pad, gy0 = box.y - box.h * pad;
       const wc = document.createElement("canvas"); wc.width = Grader.W; wc.height = Grader.H;
@@ -1106,7 +1141,7 @@ const Scan = {
             this.lastRank = ranked;
             const gap = ranked[1] ? ranked[0].score - ranked[1].score : 99;
             confident = !relaxed && ((ranked[0].score >= 90 && gap >= 12) || (ranked[0].score >= 65 && gap >= 25));
-            weak = ranked[0].score < 55;      // only a few letters matched: show the choices, don't add a guess
+            weak = ranked[0].score < 50;      // only a few letters matched: show the choices, don't add a guess
             // prices only for the card shown first (8 s at most); the others come from the list and load prices when picked
             setScanStep("Loading prices…");
             const t3 = performance.now();
@@ -1195,6 +1230,7 @@ const Visual = {
 /* ---- Card list: every English card (number, name, HP, attacks, picture) shipped with the app as pkmon-cards.json ----
    Built from the public pokemontcg.io data (tools/build-cards.py). Loaded once from our own site, kept in Cache Storage,
    so matching needs no outside server. Ranking is local, so a half-read name ("ikachuVI") or a lone number still finds the card. */
+const PROMO = /^(svp|swshp|smp|xyp|bwp|dpp|np|hsp|basep|mep)$|^mcd/;
 const CARDS_URL = "pkmon-cards.json", CARDS_V = "2026-09-16";
 const CardIndex = {
   cards: null, sets: null, loading: null, failedAt: 0, v: null, KEY: "https://pkmon.local/cards-" + CARDS_V + ".json",
@@ -1241,7 +1277,10 @@ const CardIndex = {
     const num = o.number ? normNum(o.number) : null, tot = o.total || null, gallery = num && /^(TG|GG|SV)/.test(num);
     // fuzzy number pairs (e.g. "1157/1725" → 157/172) only count when a real set has that size
     const pairs = new Map(); for (const q of o.nums || []) { if (!pairs.has(q.number)) pairs.set(q.number, new Set()); pairs.get(q.number).add(q.total); }
-    const sfx = { vmax: /vmax/.test(top), vstar: /v?star/.test(top), gx: /gx/.test(top) };
+    const rawTop = String(o.nameText || o.top || "");
+    const sfx = { vmax: /vmax/.test(top), vstar: /v?star/.test(top), gx: /gx/.test(top), v: /[a-z]{3}V(?![A-Z]{2})/.test(rawTop) && !/vmax|vstar/.test(top) };
+    // digit runs where the number may hide: "18371551" holds 183 (of 183/195, slash read as 7)
+    const runs = (String(o.full || "").toUpperCase().replace(/O/g, "0").match(/\d{3,}/g) || []);
     const hps = new Set(o.hps || []), evo = this.norm(o.evo || ""), evoT = this.tri(evo);
     const out = [];
     for (const c of this.cards) {
@@ -1251,6 +1290,7 @@ const CardIndex = {
         if (st && (pairs.get(c.num).has(st.off) || pairs.get(c.num).has(st.tot))) { s += 65; why.push("number+set size"); }
       }
       if (sfx.vmax || sfx.vstar) { const cs = / vmax$/i.test(c.name) ? "vmax" : / vstar$/i.test(c.name) ? "vstar" : / v$/i.test(c.name) ? "v" : ""; if ((sfx.vmax && cs === "vmax") || (sfx.vstar && cs === "vstar")) s += 8; else if (cs === "v" || cs === "") s -= 6; }
+      else if (sfx.v) { const cs = / v$/i.test(c.name) ? "v" : / (vmax|vstar)$/i.test(c.name) ? "big" : ""; if (cs === "v") s += 8; else if (cs === "") s -= 4; }
       if (num && c.num === num) {
         s += 45; why.push("number");
         const st = this.sets.get(c.sid);
@@ -1263,14 +1303,30 @@ const CardIndex = {
         const sim = Math.max(hitT / c.tri.size, .75 * hitA / c.tri.size) * lenW + (top.includes(c.n) && c.n.length >= 4 ? .15 : 0);
         if (sim > .34) { s += 40 * Math.min(1, sim) + Math.min(10, Math.max(hitT, hitA * .75) * .6); why.push("name"); named = true; }   // more letters seen = more evidence (breaks "Acerola" vs "Acerola's Premonition")
       }
-      // the rest only confirms a card the number or name already points at
+      // attack / ability names: long ones count even half-read ("Celestia noar" → Celestial Roar), so a foil card
+      // whose name and number the reader missed can still be found; short ones only as an exact match on a named card
+      if (c.moves.length) {
+        if (!c.mv) c.mv = c.moves.map(m => { const n = this.norm(m); return { n, tri: this.tri(n) }; });
+        const sims = [];
+        for (const m of c.mv) {
+          if (m.n.length < 5) continue;
+          if (all.includes(m.n)) { sims.push(1); continue; }
+          if (m.n.length < 8) continue;
+          let hit = 0; for (const g of m.tri) if (tAll.has(g)) hit++;
+          const sim = hit / m.tri.size; if (sim >= (s >= 20 ? .6 : .7)) sims.push(sim);
+        }
+        if (sims.length) { sims.sort((a, b) => b - a); s += 25 * sims[0] + (sims[1] ? 20 * sims[1] : 0) + (sims[2] ? 8 : 0); why.push("attack"); }
+      }
+      // the rest only confirms a card the number, name or attacks already point at
       if (s >= 20) {
         if (c.hp && hps.has(c.hp)) { s += 12; why.push("HP"); }
-        let mv = 0; for (const m of c.moves) { const mn = this.norm(m); if (mn.length >= 5 && all.includes(mn)) mv++; }
-        if (mv) { s += 20 + 8 * (mv - 1); why.push("attack"); }
+        if (!(num && c.num === num) && /^\d{2,3}$/.test(c.num) && runs.some(r => r !== String(c.hp) && (r.startsWith(c.num) || (c.num.length === 3 && r.includes(c.num))))) {
+          const st = this.sets.get(c.sid), both = st && st.off && runs.some(r => r.startsWith(c.num) && r.slice(c.num.length).includes(String(st.off)));
+          s += both ? 35 : 15; why.push(both ? "number+set size?" : "number?"); }
         if (evo && c.evo) { let hit = 0; for (const g of this.tri(c.evo)) if (evoT.has(g)) hit++; if (hit / Math.max(1, this.tri(c.evo).size) >= .6) { s += 12; why.push("evolves from"); } }
         if (evo && named && c.n === evo) s -= 18;        // "Evolves from Shaymin V" is printed on Shaymin VSTAR, not on Shaymin V
       }
+      if (s > 0 && PROMO.test(c.sid)) s -= 3;     // equal evidence: a main-set print is likelier than a promo
       if (s >= minScore) out.push({ b: c, score: s, why });
     }
     out.sort((a, b) => b.score - a.score || b.b.id.localeCompare(a.b.id));
@@ -1291,7 +1347,11 @@ async function detailsFor(entries, ms = 8000) {
     pt = await withTimeout(cardsByIds(ids), ms, "slow").catch(e => { if (e && e.message === "slow") ENV.ptcgSlowUntil = Date.now() + 5 * 6e4; return []; });
   }
   const m = new Map(pt.map(c => [c.id, c]));
-  return entries.map(e => m.get(e.id) || CardIndex.toCard(e));
+  const out = entries.map(e => m.get(e.id) || CardIndex.toCard(e));
+  // pokemontcg.io slow, down, or without prices for these cards → TCGdex prices (same time limit)
+  if (out.some(c => !hasPrice(c)) && ENV.dex !== false)
+    await Promise.all(out.map(async (c, i) => { if (!hasPrice(c)) out[i] = await withTimeout(dexPrices(c), ms, "slow").catch(() => c); }));
+  return out;
 }
 /* several cards side by side (or stacked) in one photo → one crop per card */
 async function splitCards(bmp) {
@@ -1354,6 +1414,20 @@ function locateCard(bmp) {
   const w = o.r - o.l, hh = o.b - o.t;
   if (w < W * .3 || hh < H * .3) return null;
   return { x: o.l / sc, y: o.t / sc, w: w / sc, h: hh / sc };
+}
+/* The card's outline against a plain background (any tilt): textured columns/rows vs the background */
+function textureBox(bmp) {
+  const sc = 480 / Math.max(bmp.width, bmp.height), W = Math.round(bmp.width * sc), H = Math.round(bmp.height * sc);
+  const c = document.createElement("canvas"); c.width = W; c.height = H; const x = c.getContext("2d", { willReadFrequently: true });
+  x.drawImage(bmp, 0, 0, W, H); const d = x.getImageData(0, 0, W, H).data;
+  const L = (xx, y) => { const p = (y * W + xx) * 4; return .299 * d[p] + .587 * d[p + 1] + .114 * d[p + 2]; };
+  const prof = (N, M, get) => { const a = new Float32Array(N); for (let i = 0; i < N; i++) { let s1 = 0, s2 = 0, n = 0; for (let j = Math.round(M * .15); j < M * .85; j += 2) { const v = get(i, j); s1 += v; s2 += v * v; n++; } a[i] = Math.sqrt(Math.max(0, s2 / n - (s1 / n) ** 2)); } return a; };
+  const ext = a => { const srt = [...a].sort((p1, p2) => p1 - p2), thr = Math.max(6, srt[Math.floor(a.length * .8)] * .3); let lo = -1, hi = -1;
+    for (let i = 0; i < a.length; i++) if (a[i] > thr && a[i + 1] > thr && a[i + 2] > thr) { lo = i; break; }
+    for (let i = a.length - 1; i >= 2; i--) if (a[i] > thr && a[i - 1] > thr && a[i - 2] > thr) { hi = i; break; } return [lo, hi]; };
+  const [l, r] = ext(prof(W, H, (i, j) => L(i, j))), [t, b] = ext(prof(H, W, (i, j) => L(j, i)));
+  if (l < 0 || t < 0 || r - l < W * .3 || b - t < H * .3) return null;
+  return { x: l / sc, y: t / sc, w: (r - l) / sc, h: (b - t) / sc };
 }
 /* Collector number from OCR text: 057/195, 25/165, TG20/TG30, GG35/GG70, SV107/SV122, SWSH050 */
 function normNum(n) { const m = String(n).toUpperCase().match(/^([A-Z]{0,4})0*(\d+)$/); return m ? (m[1] ? m[1] + m[2] : String(+m[2])) : String(n).toUpperCase(); }
@@ -1690,12 +1764,12 @@ function setResult(r) {
     res.forEach((x, i) => {
       const head = h("div", { class: "row", style: "gap:10px;flex-wrap:nowrap" }, h("img", { src: x.thumb, alt: "", style: "width:44px;border-radius:5px;border:1px solid var(--edge)" }),
         h("div", { style: "min-width:0;flex:1" }, h("div", { class: "nm", style: "font-weight:700" }, x.item ? x.item.name : `Card ${i + 1}: not recognised`),
-          h("div", { class: "small muted" }, x.item ? `${x.item.setName || ""} · ${x.item.number || "?"}${x.item.printedTotal ? "/" + x.item.printedTotal : ""}` : (x.note || "Search for it by name below.")),
-          x.timing ? h("div", { class: "small muted num", style: "opacity:.75" }, "⏱ " + x.timing) : null),
+          h("div", { class: "small muted" }, x.item ? `${x.item.setName || ""} · ${x.item.number || "?"}${x.item.printedTotal ? "/" + x.item.printedTotal : ""}` : (x.note || "Search for it by name below."))),
         x.item ? (x.confident ? h("span", { class: "chip good" }, x.added ? "✓ Added" : "Sure") : h("span", { class: "chip", style: "color:var(--warn)" }, x.added ? "Added · Check" : "Check")) : null,
         x.item && !x.added ? h("button", { class: "btn sm", onclick: () => { addItem(x.item, { quiet: true }); S.stackSession.unshift(x.item); x.added = true; renderTray(); setResult(r); } }, "Add") : null,
         x.item && x.added ? h("button", { class: "btn sm ghost", title: "Change this card", onclick: () => openReplace(S.items.find(i => i.id === x.item.id) || x.item) }, "Change") : null);
-      const row = h("div", { class: "mk", style: "padding:10px" }, head);
+      const row = h("div", { class: "mk", style: "padding:10px" }, head,
+        x.timing ? h("div", { class: "small muted num", style: "opacity:.75;margin-top:6px" }, "⏱ " + x.timing) : null);
       if (x.item && !x.confident) {
         const opts = [x.topCard, ...(x.candidates || [])].filter(Boolean).slice(0, 6);
         row.append(h("div", { class: "pickgrid", style: "margin-top:8px;grid-template-columns:repeat(auto-fill,minmax(78px,1fr))" },
