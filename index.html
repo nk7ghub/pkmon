@@ -569,24 +569,39 @@ function hasPrice(c) {
   const t = c && c.tcgplayer && c.tcgplayer.prices; if (t && Object.values(t).some(v => v && (v.market || v.mid || v.low))) return true;
   const m = c && c.cardmarket && c.cardmarket.prices; return !!(m && (m.trendPrice || m.averageSellPrice || m.avg30));
 }
-/* prices from TCGdex for a card that pokemontcg.io returned without any: same name + number, then the set size picks the print */
-async function dexPrices(card) {
-  const name = String(card.name || ""), num = String(card.number || ""); if (!name || !num) return card;
-  const q = (n, l) => dexGet(`/cards?name=eq:${encodeURIComponent(n)}&localId=eq:${encodeURIComponent(l)}`).catch(() => []);
-  let list = await q(name, num);
-  if (!list.length && /^\d+$/.test(num)) list = await q(name, num.padStart(3, "0"));
-  if (!list.length) return card;
-  const want = card.set && card.set.printedTotal, setName = CardIndex.norm(card.set && card.set.name);
-  let best = null;
-  for (const b of list.slice(0, 5)) {
-    const d = await dexGet("/cards/" + encodeURIComponent(b.id)).catch(() => null); if (!d) continue;
-    const m = mapDex(d); if (!hasPrice(m)) continue;
-    const sameSet = (want && m.set.printedTotal == want) || (setName && CardIndex.norm(m.set.name) === setName);
-    if (sameSet) { best = m; break; }
-    if (!best && list.length === 1) best = m;
+/* prices from TCGdex for a card that pokemontcg.io returned without any (or when pokemontcg.io is down / rate-limited).
+   Uses only endpoints the app has always relied on: the set list → the set's card list → the card (with pricing).
+   Set names match across the two databases; gallery subsets ("… Trainer Gallery") live inside the main set on TCGdex. */
+async function dexFindCard(card) {
+  const sets = await dexGet("/sets", 7 * 864e5).catch(() => []); if (!Array.isArray(sets) || !sets.length) return null;
+  const nm = String(card.set && card.set.name || ""), pid = String(card.set && card.set.id || "");
+  const names = [nm, nm.replace(/\s+(trainer gallery|galarian gallery|shiny vault|radiant collection|classic collection)$/i, "")].map(CardIndex.norm);
+  const ids = [pid, pid.replace(/^sv(\d)(?!\d)/, "sv0$1").replace(/pt5/, ".5"), pid.replace(/(tg|gg|sv)$/, "")];
+  const cand = [];
+  for (const n of names) for (const x of sets) if (CardIndex.norm(x.name) === n && !cand.includes(x)) cand.push(x);
+  for (const i of ids) for (const x of sets) if (x.id === i && !cand.includes(x)) cand.push(x);
+  const num = normNum(card.number), cn = CardIndex.norm(card.name);
+  for (const st of cand.slice(0, 3)) {
+    const full = await dexGet("/sets/" + encodeURIComponent(st.id), 864e5).catch(() => null);
+    const list = (full && full.cards) || [];
+    const hits = list.filter(c => normNum(c.localId) === num);
+    const hit = hits.find(c => CardIndex.norm(c.name) === cn) || hits.find(c => CardIndex.norm(c.name).startsWith(cn.slice(0, 5))) || (hits.length === 1 ? hits[0] : null);
+    if (hit) return hit.id;
   }
-  if (!best) return card;
-  return { ...card, tcgplayer: card.tcgplayer && hasPrice({ tcgplayer: card.tcgplayer }) ? card.tcgplayer : best.tcgplayer, cardmarket: card.cardmarket && hasPrice({ cardmarket: card.cardmarket }) ? card.cardmarket : best.cardmarket, priceFrom: "TCGdex" };
+  return null;
+}
+async function dexPrices(card) {
+  if (!card || !card.name || !card.number) return card;
+  let id = await dexFindCard(card).catch(() => null);
+  if (!id) {   // older way: search by name + number
+    const list = await dexGet(`/cards?name=${encodeURIComponent(card.name)}&localId=${encodeURIComponent(card.number)}`).catch(() => []);
+    const want = card.set && card.set.printedTotal;
+    for (const b of (Array.isArray(list) ? list : []).slice(0, 4)) { const d = await dexGet("/cards/" + encodeURIComponent(b.id)).catch(() => null); if (d && (!want || (d.set && d.set.cardCount && d.set.cardCount.official == want))) { id = b.id; break; } }
+  }
+  if (!id) return card;
+  const d = await dexGet("/cards/" + encodeURIComponent(id), 6 * 36e5).catch(() => null); if (!d) return card;
+  const m = mapDex(d); if (!hasPrice(m)) return card;
+  return { ...card, tcgplayer: hasPrice({ tcgplayer: card.tcgplayer }) ? card.tcgplayer : m.tcgplayer, cardmarket: hasPrice({ cardmarket: card.cardmarket }) ? card.cardmarket : m.cardmarket, priceFrom: "TCGdex", dexId: id };
 }
 
 /* ---- currencies ---- */
@@ -631,7 +646,7 @@ function snapshotPrices(card) {
   return {
     tcg: card.tcgplayer ? { url: card.tcgplayer.url, upd: card.tcgplayer.updatedAt, p: card.tcgplayer.prices || {} } : null,
     cm: card.cardmarket ? { url: card.cardmarket.url, upd: card.cardmarket.updatedAt, p: card.cardmarket.prices || {} } : null,
-    t: Date.now(), src: "live"
+    t: Date.now(), src: "live", via: card.priceFrom || "pokemontcg.io"
   };
 }
 function variantsOf(it) { return Object.keys((it.prices && it.prices.tcg && it.prices.tcg.p) || {}); }
@@ -1865,15 +1880,15 @@ function setResult(r) {
         h("div", { class: "row", style: "gap:14px;margin-top:4px" },
           h("div", {}, h("div", { class: "eyebrow" }, "Raw value"), h("div", { class: "num", style: "font-size:20px;font-weight:700" }, money(rawUSD(it))), it.prices.src === "ai" ? h("div", { class: "est" }, "AI estimate") : null),
           h("div", {}, h("div", { class: "eyebrow" }, "If PSA 10"), h("div", { class: "num", style: "font-size:20px;font-weight:700" }, money(gradedUSD(rawUSD(it), "PSA", 10))), h("div", { class: "est" }, "Model estimate"))))),
-    it.ai && it.ai.gradeNote ? h("p", { class: "small muted", style: "margin:10px 0 0" }, "Claude: " + it.ai.gradeNote + (it.ai.estGrade ? ` (est. ${it.ai.estGrade})` : "")) : null,
+    it.ai && it.ai.gradeNote ? h("p", { class: "small muted", style: "margin:10px 0 0" }, "Claude: " + it.ai.gradeNote + (it.ai.estGrade ? ` (est. ${it.ai.estGrade})` : "")) : "",
     h("div", { style: "margin-top:12px" }, gb),
-    r.timing ? h("div", { class: "small muted num", style: "margin-top:8px;opacity:.75" }, "⏱ " + r.timing) : null,
+    r.timing ? h("div", { class: "small muted num", style: "margin-top:8px;opacity:.75" }, "⏱ " + r.timing) : "",
     h("div", { class: "row", style: "margin-top:12px" },
       inColl ? h("span", { class: "chip good" }, "✓ Added to collection") : h("button", { class: "btn primary", onclick: () => { addItem(it); setResult({ ...r }); }, html: ICON.plus + "Add to collection" }),
       h("button", { class: "btn", onclick: () => openDetail(it) }, "Prices & details")),
     r.candidates && r.candidates.length ? h("div", { class: "stack", style: "margin-top:12px;gap:6px" }, h("div", { class: "eyebrow" }, "Not this one? Other matches"),
       h("div", { class: "tray" }, ...r.candidates.map(cd => h("button", { class: "t", style: "border:0;background:none;cursor:pointer;color:inherit", onclick: () => pick(cd) },
-        cimg(cd), `${(cd.set && cd.set.name) || ""} ${cd.number}`)))) : null
+        cimg(cd), `${(cd.set && cd.set.name) || ""} ${cd.number}`)))) : ""
   );
 }
 function renderTray() {
@@ -2318,7 +2333,7 @@ function openDetail(it) {
         h("div", { class: "row", style: "gap:18px;margin-top:6px" },
           h("div", {}, h("div", { class: "eyebrow" }, "Your value"), h("div", { class: "num", style: "font-size:26px;font-weight:700" }, money(unitUSD(it) * (it.qty || 1))), h("div", { class: "small muted" }, `${it.qty || 1} × ${money(unitUSD(it))}`)),
           it.paid ? h("div", {}, h("div", { class: "eyebrow" }, "Gain"), h("div", { class: "num " + (unitUSD(it) >= it.paid ? "up" : "down"), style: "font-size:20px;font-weight:700" }, money((unitUSD(it) - it.paid) * (it.qty || 1), { sign: true })), h("div", { class: "small muted" }, pct((unitUSD(it) - it.paid) / it.paid))) : null),
-        h("div", { class: "small muted" }, it.prices?.src === "live" ? `Prices from TCGplayer & Cardmarket via pokemontcg.io · saved ${upd}` : it.prices?.src === "ai" ? "Price is Claude's estimate from what it knows, not a live quote. Open the web version to fetch live prices." : ""))));
+        h("div", { class: "small muted" }, it.prices?.src === "live" ? `Prices from TCGplayer & Cardmarket via ${it.prices.via || "pokemontcg.io"} · saved ${upd}` : it.prices?.src === "ai" ? "Price is Claude's estimate from what it knows, not a live quote. Open the web version to fetch live prices." : ""))));
 
     // raw / graded toggle
     wrap.append(h("div", { class: "row between" }, h("h2", {}, "Market prices"),
@@ -2554,7 +2569,7 @@ async function exportPDF() {
     body: S.alerts.map(a => { const it = S.items.find(i => i.id === a.itemId); return [txt(a.name), a.dir === "above" ? "Rises to" : "Falls to", m(a.target), it ? m(unitUSD(it)) : "—", a.active ? "Yes" : "No"]; }), styles: { fontSize: 8.5, textColor: [21, 23, 58] }, headStyles: { fillColor: [252, 226, 240], textColor: [150, 30, 100] } });
   const pages = doc.internal.getNumberOfPages();
   for (let i = 1; i <= pages; i++) { doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(122, 127, 166);
-    doc.text("Prices: TCGplayer & Cardmarket via pokemontcg.io (daily). Graded values and AI prices are estimates. Condition scores are image-based pre-grades, not official grades.", 36, doc.internal.pageSize.getHeight() - 18);
+    doc.text("Prices: TCGplayer & Cardmarket via pokemontcg.io or TCGdex (daily). Graded values and AI prices are estimates. Condition scores are image-based pre-grades, not official grades.", 36, doc.internal.pageSize.getHeight() - 18);
     doc.text(`Page ${i} of ${pages}`, W - 36, doc.internal.pageSize.getHeight() - 18, { align: "right" }); }
   await saveFile(`pkmon-vault-${today()}.pdf`, doc.output("blob"), "application/pdf");
 }
