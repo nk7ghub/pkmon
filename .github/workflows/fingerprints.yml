@@ -1,0 +1,35 @@
+name: Card list + picture fingerprints
+# Rebuilds pkmon-cards.json and pkmon-fp.bin from the public pokemontcg.io data and card images.
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 2 * *"   # monthly, 2nd at 03:17 UTC
+permissions:
+  contents: write
+concurrency: fingerprints
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pillow numpy
+      - run: git clone --depth 1 https://github.com/PokemonTCG/pokemon-tcg-data /tmp/ptcg
+      - name: Card list
+        run: python3 tools/build-cards.py /tmp/ptcg > pkmon-cards.json
+      - name: Fingerprints
+        run: python3 tools/build-fingerprints.py pkmon-cards.json pkmon-fp.bin
+      - name: Point the app at the new list version
+        run: |
+          V=$(python3 -c "import json;print(json.load(open('pkmon-cards.json'))['v'])")
+          sed -i -E "s/CARDS_V = \"[0-9-]+\"/CARDS_V = \"$V\"/" index.html
+          echo "list version $V"
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add pkmon-cards.json pkmon-fp.bin index.html
+          git diff --cached --quiet && echo "no changes" || (git commit -m "Rebuild card list and picture fingerprints" && git push)
