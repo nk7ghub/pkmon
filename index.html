@@ -1173,7 +1173,7 @@ const Scan = {
             const textOf = new Map(all.map(r => [r.b, r]));
             for (const t of fpr.top.slice(0, FP_POOL)) { const c = CardIndex.cards[t.i]; if (ranked.some(r => r.b === c)) continue;
               const tr = textOf.get(c); ranked.push({ b: c, score: tr ? tr.score : 0, why: tr ? [...tr.why] : [] }); }
-            ranked.forEach(r => { const z = (fpr.all[r.b.ix] - fpr.mean) / fpr.sd; r.fz = +z.toFixed(2); const pts = fpPoints(z); if (pts > 0) { r.score += pts; r.why.push("picture"); } });
+            ranked.forEach(r => { const z = fpr.z[r.b.ix]; r.fz = +z.toFixed(2); const pts = fpPoints(z); if (pts > 0) { r.score += pts; r.why.push("picture"); } });
             if (relaxed && fpr.top[0] && fpr.top[0].z >= FP_STRONG) relaxed = false;     // the picture alone is convincing
           }
           tm.pics = performance.now() - t2;
@@ -1330,14 +1330,22 @@ const FP = {
   },
   W: { c: .45, a: .35, f: .2 },
   /* every card scored; returns the best k with a z-score against the whole catalogue */
+  /* the cut-out may hold some background or miss a sliver of the card: try a few crops, keep each card's best z-score */
+  VARIANTS: [[1, 0, 0], [.94, 0, 0], [.88, 0, 0], [.94, 0, -.025], [.94, 0, .025]],
   search(src, k = 40) {
     if (!this.data) return null;
-    const f = this.feat(src), n = this.n, s = new Float32Array(n); let sum = 0, sq = 0, m = 0;
-    for (let i = 0; i < n; i++) { const v = this.sim(f, i); s[i] = v; if (v >= 0) { sum += v; sq += v * v; m++; } }
-    const mean = sum / m, sd = Math.sqrt(Math.max(1e-9, sq / m - mean * mean));
-    const top = []; for (let i = 0; i < n; i++) { if (s[i] < 0) continue; if (top.length < k || s[i] > top[top.length - 1].sim) { top.push({ i, sim: s[i] }); top.sort((a, b) => b.sim - a.sim); if (top.length > k) top.pop(); } }
-    top.forEach(t => t.z = (t.sim - mean) / sd);
-    return { top, mean, sd, all: s };
+    const n = this.n, best = new Float32Array(n).fill(-99), W = src.width, H = src.height;
+    for (const [sc, dx, dy] of this.VARIANTS) {
+      let im = src;
+      if (sc !== 1 || dx || dy) { const w = W * sc, h = H * sc; im = document.createElement("canvas"); im.width = Math.round(w); im.height = Math.round(h);
+        im.getContext("2d").drawImage(src, (W - w) / 2 + dx * W, (H - h) / 2 + dy * H, w, h, 0, 0, im.width, im.height); }
+      const f = this.feat(im), s = new Float32Array(n); let sum = 0, sq = 0, m = 0;
+      for (let i = 0; i < n; i++) { const v = this.sim(f, i); s[i] = v; if (v >= 0) { sum += v; sq += v * v; m++; } }
+      const mean = sum / m, sd = Math.sqrt(Math.max(1e-9, sq / m - mean * mean));
+      for (let i = 0; i < n; i++) if (s[i] >= 0) { const z = (s[i] - mean) / sd; if (z > best[i]) best[i] = z; }
+    }
+    const top = []; for (let i = 0; i < n; i++) { if (best[i] <= -99) continue; if (top.length < k || best[i] > top[top.length - 1].z) { top.push({ i, z: best[i] }); top.sort((a, b) => b.z - a.z); if (top.length > k) top.pop(); } }
+    return { top, z: best };
   }
 };
 const FP_POOL = 15, FP_STRONG = 5;
