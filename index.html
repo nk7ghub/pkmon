@@ -1155,21 +1155,34 @@ const Scan = {
         const t1 = performance.now();
         const idx = await CardIndex.load().catch(() => null);
         tm.list = performance.now() - t1;
-        if (idx && (o.number || o.text)) {
+        if (idx) {
           // strong text read → top 12; weak read → a wider pool so the picture check can find the card
-          const strict = CardIndex.rank(o); let ranked, relaxed = false;
-          if (!strict.length) { ranked = CardIndex.rank(o, 12).slice(0, 20); relaxed = true; }
-          else if (strict[0].score < 60) ranked = CardIndex.rank(o, 12).slice(0, 20);
+          const all = CardIndex.rank(o, 1), strict = all.filter(r => r.score >= 25); let ranked, relaxed = false;
+          if (!strict.length) { ranked = all.filter(r => r.score >= 12).slice(0, 20); relaxed = true; }
+          else if (strict[0].score < 60) ranked = all.filter(r => r.score >= 12).slice(0, 20);
           else ranked = strict.slice(0, 12);
           // other prints with the same name (regular / full art / rainbow / gallery) so the picture check can tell them apart
           const top3 = new Set(ranked.slice(0, 3).map(r => r.b.n));
           for (const c of CardIndex.cards) { if (ranked.length >= 28) break; if (top3.has(c.n) && !ranked.some(r => r.b === c)) ranked.push({ b: c, score: Math.max(0, ranked.find(r => r.b.n === c.n).score - 30), why: ["same name"] }); }
+          // picture fingerprints: every card in the catalogue against this photo; strong look-alikes join the pool
+          setScanStep("Matching the card picture…");
+          const t2 = performance.now();
+          const fp = await withTimeout(FP.load(), 4000, "slow").catch(() => null);
+          const fpr = fp ? FP.search(hi || shot, 40) : null;
+          if (fpr) {
+            const textOf = new Map(all.map(r => [r.b, r]));
+            for (const t of fpr.top.slice(0, FP_POOL)) { const c = CardIndex.cards[t.i]; if (ranked.some(r => r.b === c)) continue;
+              const tr = textOf.get(c); ranked.push({ b: c, score: tr ? tr.score : 0, why: tr ? [...tr.why] : [] }); }
+            ranked.forEach(r => { const z = (fpr.all[r.b.ix] - fpr.mean) / fpr.sd; r.fz = +z.toFixed(2); const pts = fpPoints(z); if (pts > 0) { r.score += pts; r.why.push("picture"); } });
+            if (relaxed && fpr.top[0] && fpr.top[0].z >= FP_STRONG) relaxed = false;     // the picture alone is convincing
+          }
+          tm.pics = performance.now() - t2;
           if (ranked.length) {
-            // picture check on the pool (official images), 8 s at most
-            setScanStep(`Comparing card pictures (${ranked.length})…`);
-            const t2 = performance.now();
-            const sims = await withTimeout(Visual.compare(hi || shot, ranked), 8000, "slow").catch(() => null);
-            tm.pics = performance.now() - t2;
+            // without fingerprints: picture check on the pool (official images), 8 s at most
+            if (!fpr) setScanStep(`Comparing card pictures (${ranked.length})…`);
+            const t2b = performance.now();
+            const sims = fpr ? null : await withTimeout(Visual.compare(hi || shot, ranked), 8000, "slow").catch(() => null);
+            if (!fpr) tm.pics = performance.now() - t2b;
             if (sims) { const ok = sims.filter(v => v != null);
               if (ok.length >= 2) { const mn = Math.min(...ok), mx = Math.max(...ok);
                 if (mx - mn > .03) ranked.forEach((r, i) => { if (sims[i] == null) return; const b = 45 * (sims[i] - mn) / (mx - mn); r.score += b; r.vis = +sims[i].toFixed(3); if (b > 33) r.why.push("picture"); }); } }
@@ -1263,6 +1276,74 @@ const Visual = {
     }));
   }
 };
+/* ---- Picture fingerprints for every card (pkmon-fp.bin, built by tools/build-fingerprints.py on GitHub) ----
+   Same method on both sides: 64×88 box-averaged card → 4×8 lighting-normalised colour grid + 64-bit shape hashes of the
+   artwork and the whole card. Searching all ~20k cards takes a few ms, so a card can be found with no readable text. */
+const FP = {
+  REC: 113, data: null, n: 0, loading: null, failedAt: 0,
+  async load() {
+    if (this.data) return this;
+    if (this.loading) return this.loading;
+    if (ENV.claude || Date.now() - this.failedAt < 120000) return null;
+    this.loading = (async () => {
+      const idx = await CardIndex.load(); if (!idx) throw new Error("no card list");
+      const key = "https://pkmon.local/fp-" + CARDS_V + ".bin"; let buf = null, cache = null;
+      try { cache = await caches.open("pkmon-index"); const r = await cache.match(key); if (r) buf = await r.arrayBuffer(); } catch { /* no Cache Storage */ }
+      if (!buf) {
+        const base = /^https?:/.test(location.protocol) ? new URL("pkmon-fp.bin", location.href).href : PUBLIC_URL + "pkmon-fp.bin";
+        const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 60000);
+        try { const r = await fetch(base + "?v=" + CARDS_V, { signal: ctrl.signal }); if (!r.ok) throw new Error("fingerprints " + r.status); buf = await r.arrayBuffer(); } finally { clearTimeout(t); }
+        try { if (cache) await cache.put(key, new Response(buf.slice(0), { headers: { "content-type": "application/octet-stream" } })); } catch { /* memory only */ }
+      }
+      const u8 = new Uint8Array(buf), dv = new DataView(buf);
+      if (String.fromCharCode(...u8.slice(0, 4)) !== "PKFP" || u8[5] !== this.REC) throw new Error("fingerprint file format");
+      const n = dv.getUint32(6, true), v = new TextDecoder().decode(u8.slice(10, 26)).replace(/\0+$/, "");
+      if (n !== idx.cards.length || v !== idx.v) throw new Error(`fingerprints are for list ${v} (${n}), app has ${idx.v} (${idx.cards.length})`);
+      this.data = u8.subarray(26); this.n = n;
+      return this;
+    })().catch(e => { console.warn("fingerprints", e && e.message); this.loading = null; this.failedAt = Date.now(); return null; });
+    return this.loading;
+  },
+  /* fingerprint of an image or canvas showing one whole card, upright */
+  feat(src) {
+    const c = document.createElement("canvas"); c.width = 256; c.height = 352; const x = c.getContext("2d", { willReadFrequently: true });
+    x.imageSmoothingEnabled = true; x.imageSmoothingQuality = "high"; x.drawImage(src, 0, 0, 256, 352);
+    const d = x.getImageData(0, 0, 256, 352).data, W = 64, H = 88, R = new Float64Array(W * H), G = new Float64Array(W * H), B = new Float64Array(W * H);
+    for (let y = 0; y < 352; y++) for (let xx = 0; xx < 256; xx++) { const p = (y * 256 + xx) * 4, q = (y >> 2) * W + (xx >> 2); R[q] += d[p]; G[q] += d[p + 1]; B[q] += d[p + 2]; }
+    let mr = 0, mg = 0, mb = 0; for (let i = 0; i < W * H; i++) { R[i] /= 16; G[i] /= 16; B[i] /= 16; mr += R[i]; mg += G[i]; mb += B[i]; }
+    mr = mr / (W * H) || 1; mg = mg / (W * H) || 1; mb = mb / (W * H) || 1;
+    const col = new Uint8Array(96); let k = 0;
+    for (let r = 0; r < 8; r++) for (let cc = 0; cc < 4; cc++) { let sr = 0, sg = 0, sb = 0; for (let y = r * 11; y < r * 11 + 11; y++) for (let xx = cc * 16; xx < cc * 16 + 16; xx++) { const q = y * W + xx; sr += R[q]; sg += G[q]; sb += B[q]; }
+      col[k++] = Math.min(255, Math.round(sr / 176 / mr * 100)); col[k++] = Math.min(255, Math.round(sg / 176 / mg * 100)); col[k++] = Math.min(255, Math.round(sb / 176 / mb * 100)); }
+    const grey = new Float64Array(W * H); for (let i = 0; i < W * H; i++) grey[i] = R[i] * .299 + G[i] * .587 + B[i] * .114;
+    const dh = (x0, y0, x1, y1) => { const cw = (x1 - x0) / 9, ch = (y1 - y0) / 8, out = new Uint8Array(8), m = [];
+      for (let r = 0; r < 8; r++) { m[r] = []; for (let cc = 0; cc < 9; cc++) { let s = 0; for (let y = y0 + r * ch; y < y0 + (r + 1) * ch; y++) for (let xx = x0 + cc * cw; xx < x0 + (cc + 1) * cw; xx++) s += grey[y * W + xx]; m[r][cc] = s; } }
+      for (let r = 0; r < 8; r++) { let b = 0; for (let cc = 0; cc < 8; cc++) if (m[r][cc] > m[r][cc + 1]) b |= 1 << cc; out[r] = b; } return out; };
+    return { col, ha: dh(5, 9, 59, 41), hf: dh(1, 0, 64, 88) };
+  },
+  /* similarity 0..1 of a photo fingerprint and card i */
+  sim(f, i) {
+    const o = i * this.REC, D = this.data; if (!D[o + 112]) return -1;
+    let dc = 0; for (let k = 0; k < 96; k++) dc += Math.min(150, Math.abs(f.col[k] - D[o + k])); dc /= 96 * 100;
+    let ha = 0, hf = 0; for (let k = 0; k < 8; k++) { ha += POP8[f.ha[k] ^ D[o + 96 + k]]; hf += POP8[f.hf[k] ^ D[o + 104 + k]]; }
+    return 1 - (FP.W.c * dc + FP.W.a * ha / 64 + FP.W.f * hf / 64);
+  },
+  W: { c: .45, a: .35, f: .2 },
+  /* every card scored; returns the best k with a z-score against the whole catalogue */
+  search(src, k = 40) {
+    if (!this.data) return null;
+    const f = this.feat(src), n = this.n, s = new Float32Array(n); let sum = 0, sq = 0, m = 0;
+    for (let i = 0; i < n; i++) { const v = this.sim(f, i); s[i] = v; if (v >= 0) { sum += v; sq += v * v; m++; } }
+    const mean = sum / m, sd = Math.sqrt(Math.max(1e-9, sq / m - mean * mean));
+    const top = []; for (let i = 0; i < n; i++) { if (s[i] < 0) continue; if (top.length < k || s[i] > top[top.length - 1].sim) { top.push({ i, sim: s[i] }); top.sort((a, b) => b.sim - a.sim); if (top.length > k) top.pop(); } }
+    top.forEach(t => t.z = (t.sim - mean) / sd);
+    return { top, mean, sd, all: s };
+  }
+};
+const FP_POOL = 15, FP_STRONG = 5;
+/* picture points from how far a card stands out from the whole catalogue (z-score) */
+const fpPoints = z => clamp((z - 2.5) * 12, 0, 55);
+const POP8 = new Uint8Array(256).map((_, i) => { let c = 0, v = i; while (v) { c += v & 1; v >>= 1; } return c; });
 /* ---- Card list: every English card (number, name, HP, attacks, picture) shipped with the app as pkmon-cards.json ----
    Built from the public pokemontcg.io data (tools/build-cards.py). Loaded once from our own site, kept in Cache Storage,
    so matching needs no outside server. Ranking is local, so a half-read name ("ikachuVI") or a lone number still finds the card. */
@@ -1289,11 +1370,11 @@ const CardIndex = {
       this.v = data.v;
       const sets = data.sets.map(([id, name, series, off, tot, date]) => ({ id, name, series, off, tot, date }));
       this.sets = new Map(sets.map(s => [s.id, s]));
-      this.cards = data.cards.map(([si, lid, name, hp, moves, evo, rarity, ik, oid]) => {
+      this.cards = data.cards.map(([si, lid, name, hp, moves, evo, rarity, ik, oid], ix) => {
         const st = sets[si], id = oid || st.id + "-" + lid, n = this.norm(name);
         const img = ik === 1 ? `https://images.scrydex.com/pokemon/${id}/small` : typeof ik === "string" ? ik : `https://images.pokemontcg.io/${st.id}/${lid}.png`;
         const imgL = ik === 1 ? `https://images.scrydex.com/pokemon/${id}/large` : typeof ik === "string" ? ik : `https://images.pokemontcg.io/${st.id}/${lid}_hires.png`;
-        return { id, lid: String(lid), num: normNum(lid), name, n, tri: this.tri(n), hp: hp || null, moves: moves ? moves.split("|") : [], evo: this.norm(evo), rarity, img, imgL, sid: st.id };
+        return { ix, id, lid: String(lid), num: normNum(lid), name, n, tri: this.tri(n), hp: hp || null, moves: moves ? moves.split("|") : [], evo: this.norm(evo), rarity, img, imgL, sid: st.id };
       });
       return this;
     })().catch(e => { console.warn("card list", e); this.loading = null; this.failedAt = Date.now(); return null; });
@@ -2809,7 +2890,7 @@ async function boot() {
     if (db && ENV.uid) { const ok = await Store.loadCloud(); if (ok) render(); }
   }
   // the card list loads in the background straight away, so it's ready before the first scan
-  if (!ENV.claude) CardIndex.load().then(i => { if (i) { const c = $("#modeChip"); if (c) c.title += ` · card list: ${i.cards.length.toLocaleString()} cards (${i.v})`; } });
+  if (!ENV.claude) CardIndex.load().then(i => { if (i) { const c = $("#modeChip"); if (c) c.title += ` · card list: ${i.cards.length.toLocaleString()} cards (${i.v})`; FP.load().then(f => { if (f && c) c.title += " · picture fingerprints on"; }); } });
   ENV.online = await probeOnline(); setModeChip();
   if (ENV.online) {
     await loadRates();
